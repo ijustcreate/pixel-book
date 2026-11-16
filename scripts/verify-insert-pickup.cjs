@@ -7,7 +7,7 @@ const fs=require('node:fs/promises'),path=require('node:path'),os=require('node:
     const page=await app.firstWindow();await app.evaluate(({BrowserWindow})=>{const w=BrowserWindow.getAllWindows()[0];w.webContents.setBackgroundThrottling(false);w.hide();});
     await page.waitForFunction(()=>document.querySelector('#loading')?.hidden,null,{timeout:15000,polling:100});
     const results=await page.evaluate(()=>{
-      const results=[];pageCount=28;closedEdge=null;coverMotion=null;
+      const results=[];pageCount=28;closedEdge=null;coverMotion=null;bookShelfMode=false;bookTableMode=false;
       for(const item of allInserts())Object.assign(itemState(item),{taped:false,pageNumber:99999,outside:false});
       const s=itemState(keepsakes[0]);
       for(const direction of [-1,1])for(const [u,v,rotation] of [[.64,.82,-.07],[.25,.25,1.35]]){

@@ -1,6 +1,8 @@
 'use strict';
 // Material coordinates remain stable for saved drawings and bookmarks.
 const ORIGINAL_PAGE_RATIO=400/392;
+// Reading pagination changes type size, not the physical source volume.
+const physicalPageCount=book=>book.readingSource?.pageCount||book.pageCount;
 function bookFormat(book=bookContent){
   const id=book.starterId,base=starterLibrary.get(id);
   const source=id==='inferno-dore'?{widthPt:553,heightPt:734}:book.format||base?.format;
@@ -30,7 +32,7 @@ function updateBookFormatControls(){
   if(document.activeElement!==document.querySelector('#format-height'))document.querySelector('#format-height').value=Math.round(f.heightPt*25.4/72);
   document.querySelector('#format-verse').checked=f.centerVerse;document.querySelector('#page-format-size').textContent=`${Math.round(f.widthPt*25.4/72)} × ${Math.round(f.heightPt*25.4/72)} mm`;
   document.querySelector('#format-verse').closest('label').hidden=!Object.values(starterLibrary.get(bookContent.starterId)?.pages||bookContent.pages).some(page=>page.preserveLines&&page.body?.trim());
-  for(const id of ['page-format','format-width','format-height','format-verse'])document.querySelector('#'+id).disabled=!!motion||!!coverMotion;
+  for(const id of ['page-format','format-width','format-height','format-verse'])document.querySelector('#'+id).disabled=!!motion||!!coverMotion||(typeof isReadingEdition==='function'&&isReadingEdition());
 }
 function initBookFormatControls(){
   const group=document.createElement('fieldset');group.className='book-format-options';group.innerHTML=`<legend>Page shape</legend><label>Format <select id="page-format"><option value="source">Source PDF proportions</option><option value="wide">Original wide</option><option value="portrait">Portrait · 3:4</option><option value="trade">Trade · 2:3</option><option value="square">Square</option><option value="custom">Custom trim</option></select></label><span id="page-format-size"></span><span id="page-format-custom" hidden><label>Width mm <input id="format-width" type="number" min="70" max="400"></label><label>Height mm <input id="format-height" type="number" min="90" max="500"></label></span><label class="check"><input id="format-verse" type="checkbox">Centre verse column · keep lines left-aligned</label>`;document.querySelector('.options').append(group);

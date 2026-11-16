@@ -1,0 +1,170 @@
+{
+  "result": [
+    {
+      "id": "dracula",
+      "name": "Dracula",
+      "count": 1136,
+      "version": 2,
+      "body": 1051,
+      "meanFill": 0.9782876712328932,
+      "under": [],
+      "overflow": [],
+      "kinds": {
+        "illustration": 28,
+        "title": 1,
+        "prose": 1079,
+        "chapter opening": 27,
+        "blank": 1
+      }
+    },
+    {
+      "id": "frankenstein",
+      "name": "Frankenstein",
+      "count": 611,
+      "version": 2,
+      "body": 531,
+      "meanFill": 0.9782876712328674,
+      "under": [],
+      "overflow": [],
+      "kinds": {
+        "title": 1,
+        "blank": 17,
+        "contents": 3,
+        "chapter opening": 31,
+        "prose": 559
+      }
+    },
+    {
+      "id": "dorian-gray",
+      "name": "The Picture of Dorian Gray",
+      "count": 629,
+      "version": 2,
+      "body": 583,
+      "meanFill": 0.9782876712328721,
+      "under": [],
+      "overflow": [],
+      "kinds": {
+        "title": 1,
+        "blank": 2,
+        "contents": 1,
+        "chapter opening": 21,
+        "prose": 604
+      }
+    },
+    {
+      "id": "peter-pan",
+      "name": "Peter Pan (Peter and Wendy)",
+      "count": 375,
+      "version": 2,
+      "body": 337,
+      "meanFill": 0.9782876712328685,
+      "under": [],
+      "overflow": [],
+      "kinds": {
+        "title": 1,
+        "blank": 2,
+        "contents": 1,
+        "chapter opening": 17,
+        "prose": 354
+      }
+    },
+    {
+      "id": "divine-comedy",
+      "name": "The Divine Comedy",
+      "count": 410,
+      "body": 0,
+      "meanFill": 0,
+      "under": [],
+      "overflow": [],
+      "kinds": {
+        "title": 1,
+        "verse": 402,
+        "contents": 4,
+        "chapter opening": 1,
+        "back matter": 2
+      }
+    },
+    {
+      "id": "time-machine",
+      "name": "The Time Machine",
+      "count": 267,
+      "version": 2,
+      "body": 229,
+      "meanFill": 0.9782876712328711,
+      "under": [],
+      "overflow": [],
+      "kinds": {
+        "title": 1,
+        "blank": 2,
+        "contents": 1,
+        "chapter opening": 17,
+        "prose": 246
+      }
+    },
+    {
+      "id": "common-sense",
+      "name": "Common Sense",
+      "count": 145,
+      "version": 2,
+      "body": 137,
+      "meanFill": 0.9782876712328764,
+      "under": [],
+      "overflow": [],
+      "kinds": {
+        "chapter opening": 4,
+        "prose": 141
+      }
+    },
+    {
+      "id": "secret-garden",
+      "name": "The Secret Garden",
+      "count": 631,
+      "version": 2,
+      "body": 573,
+      "meanFill": 0.9782876712328712,
+      "under": [],
+      "overflow": [],
+      "kinds": {
+        "title": 1,
+        "blank": 2,
+        "contents": 1,
+        "chapter opening": 27,
+        "prose": 600
+      }
+    },
+    {
+      "id": "romeo-juliet",
+      "name": "Romeo and Juliet",
+      "count": 337,
+      "version": 2,
+      "body": 275,
+      "meanFill": 0.9472702366127035,
+      "under": [],
+      "overflow": [],
+      "kinds": {
+        "title": 1,
+        "verse": 6,
+        "contents": 1,
+        "scene opening": 27,
+        "play dialogue": 302
+      }
+    },
+    {
+      "id": "inferno-dore",
+      "name": "Inferno · Illustrated",
+      "count": 340,
+      "body": 0,
+      "meanFill": 0,
+      "under": [],
+      "overflow": [],
+      "kinds": {
+        "title": 1,
+        "verse": 262,
+        "contents": 2,
+        "illustration and text": 2,
+        "illustration": 73
+      }
+    }
+  ],
+  "errors": []
+}

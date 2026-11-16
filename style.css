@@ -44,8 +44,10 @@ canvas:focus-visible { outline:1px solid #8d6c46; outline-offset:-30px; }
 #loading.load-error a { display:block; margin-top:8px; color:#f0d39c; text-decoration:underline; pointer-events:auto; }
 body.file-open nav, body.file-open .close-book, body.file-open .hint, body.file-open .book-options { display:none; }
 nav { display:flex; align-items:center; justify-content:center; gap:25px; position:relative; }
-button,select { font:12px monospace; background:#14191b; border:1px solid #514638; color:#d7c5a1; padding:9px 12px; border-radius:2px; cursor:pointer; }
-button:hover,select:hover { border-color:#ae8553; color:#f6dbac; }
+button,select { font:12px monospace; background:linear-gradient(180deg,#1a2021,#111617); border:1px solid #514638; color:#d7c5a1; padding:9px 12px; border-radius:3px; cursor:pointer; transition:background-color .14s ease,border-color .14s ease,color .14s ease,transform .14s ease; }
+button:hover,select:hover { border-color:#ae8553; color:#f6dbac; background-image:linear-gradient(180deg,#29251d,#1b1915); }
+button:active:not(:disabled) { transform:translateY(1px); }
+button:focus-visible,select:focus-visible,input:focus-visible,textarea:focus-visible { outline:2px solid #d5b36e; outline-offset:2px; }
 button:disabled { opacity:.3; cursor:default; }
 nav button { width:48px; font-size:21px; padding:4px; }
 output { font:12px monospace; min-width:126px; text-align:center; letter-spacing:.12em; }
@@ -61,6 +63,7 @@ output { font:12px monospace; min-width:126px; text-align:center; letter-spacing
 #reading-font { max-width:190px; }
 #reader-book-name { color:#b9a47e;font-size:15px;overflow:hidden;white-space:nowrap;text-overflow:ellipsis; }
 canvas.clear-type { image-rendering:auto; }
+@media(prefers-reduced-motion:reduce){*,*::before,*::after{scroll-behavior:auto!important;transition-duration:.01ms!important;animation-duration:.01ms!important;animation-iteration-count:1!important}}
 .reader-navigation { display:flex;justify-content:center;align-items:center;gap:22px;flex-wrap:wrap;position:relative;font:13px monospace; }
 .reader-navigation nav { gap:12px; }
 .reader-navigation label { white-space:nowrap; }

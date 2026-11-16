@@ -1,5 +1,71 @@
 # Changelog
 
+## 1.0.46 - 2026-10-26
+
+- Replace Romeo and Juliet source-page shrink-to-fit with dedicated play pagination in the selected pixel font. Preserve every source word and line, apply hanging indents to wrapped verse, distinguish speakers and stage directions, and keep speaker labels with their dialogue.
+- Give acts composed divider pages, wrap scene headings, remap all scene/contents links and show speaker continuation context. Preserve Original pages and authored/marked pages.
+
+
+## 1.0.45 - 2026-10-26
+
+- Typeset reading editions using the selected pixel font and actual chapter regions. Flow prose continuously across imported page boundaries at a consistent size; preserve intentional chapter endings, plates, verse and back matter.
+- Add explicit profiles for all ten bundled editions, page classification and layout auditing. Preserve authored or bookmarked fragments and source passage anchors through pagination and font changes.
+- Give Common Sense a composed opening. Make Peter Pan shorter, wider in cover proportions and slightly wider at the spine on the shelf.
+
+
+## 1.0.44 - 2026-10-26
+
+- Restore prominent chapter headings, separate chapter numbers and journal subtitles, pixel ornaments, balanced title pages and clearer contents headers. Recognize previously unstyled chapter openings and correct nearby chapter destinations.
+- Restore the selected pixel font for reading-edition body text. Rewrap at a consistent fitted size while retaining readable pagination, reading positions and edition-local edits.
+- Preserve paragraph indents, handle long words without overflow, and invalidate fallback font measurements after lazy font loading.
+
+
+## 1.0.43 - 2026-10-26
+
+- Add larger Georgia reading editions for prose novels with continuous pagination, original-word coverage, remapped chapter links and original-edition switching. Keep illustrated, annotated and edited source pages intact; preserve verse line structure. Edition-local edits are retained independently.
+- Fit the visible book bounds to the window, increase text resolution, concentrate resting curvature closer to the gutter, expose page zoom and remember reading location/focus.
+- Show the installed version in the window title and provide a version-labeled desktop shortcut.
+
+
+## 1.0.42 - 2026-10-24
+
+- Correct the binding regression: move the sewn edge with the page block between inner board joints, eliminating the exposed half-spine strip at the first and last spreads. Preserve constrained diagonal turns.
+- Use the projected binding for turn release and insert crossing. Add independent endpoint joint checks and first/middle/last spread captures.
+
+## 1.0.41 � 2026-10-24
+
+- Restore bounded diagonal pulls using a coupled fold phase and shear with an invertible material-row coordinate; retain a separating direction within each row to prevent self-intersection. Lower the rolling bend and soften the initial peel.
+- Anchor resting and turning leaves to the leather spine centre line, including its head and tail, rather than moving the sewing to the board joint at the ends of the book.
+- Pre-render bundled shelf materials and default edition text sizes; load only required fonts, defer illustrations, skip unused legacy repagination, and reuse recoloured sprites. Custom covers and edited text retain live rendering/layout.
+- Validate diagonal pulls, binding alignment, reversals, raster depth/coverage, shelf gestures and fonts. Regenerate bundled material/layout caches with `node scripts/bake-shelf-materials.cjs` against the current web preview after changing bundled covers, fonts, typography or editions, then rebuild the web output.
+
+## 1.0.40 � 2026-10-24
+
+- Replace the held arch, free tail and vertex-blended release with one constrained turning surface. Every cross-section advances along a separating axis and material rows retain distinct vertical coordinates.
+- Solve horizontal drag position on that surface; resist vertical pulls instead of creating a second, intersecting fold. Release and cancellation follow the same geometry.
+- Add a full-domain separating-coordinate regression and commit/cancel checks in both directions.
+
+## 1.0.36 — 2026-10-23
+
+- Keep dragged inserts in one lifted screen-space pose across the gutter; commit their page support only on release and ease them into the supporting surface.
+- Blend a held page into the free-turn curve during release, widen and soften the moving crease, and pace manual landings to prevent a final-frame snap or abrupt grip motion.
+- Extend the natural-turn check to cover release handoff monotonicity and per-frame grip travel. Extend insert transfer coverage to verify stable saved support during a real cross-gutter drag and a settled landing.
+
+## 1.0.35 — 2026-10-22
+
+- Correct the held-page regression shown in `book current.gif`: resist off-book vertical pulls, limit page pitch and lift, and keep a wider supported panel through the turn.
+- Localize the automatic crease so cover artwork and text do not collapse edge-on across most of the leaf. Let the fold lean slightly at mid-turn, reduce the hanging bow, and delay the peel until the grip travels.
+- Reduce held-curve solver samples while preserving the material-length solve and subpixel grip tracking.
+- Add an off-page envelope measure to the 1,112-pose reversal sweep while retaining grip, material proportion, and no-drift checks. See the new 13-point GIF review in `docs/page-turn-quality.md`.
+
+## 1.0.34 — 2026-10-22
+
+- Render turning pages and inserts in one indexed, alpha-aware depth buffer, with per-triangle faces and a sorted-triangle Canvas fallback.
+- Use variable-curvature page surfaces and arc-length-preserving held arches for low pulls, spine crossings and repeated reversals. Keep the complete sewn edge attached and ease the held point through release.
+- Preserve insert overhang, stiffness, thickness and supporting contact. Add bounded friction and angular response, continuous shadows, saved landing poses and smooth cancellation rollback.
+- Prioritize insert pickup over underlying page actions. Match inspection lift/return to projected card axes and use a perspective flip with explicit tape state.
+- Verify material geometry, watertight rasterization, front/back faces, cutout depth, insert coverage, real mouse gestures, 1,112 reversal poses, inspection, bookmarks and packaged desktop source identity. See `docs/page-turn-quality.md` for the 26-point contract.
+
 ## 1.0.30 — 2026-10-20
 
 - Enlarge the reading canvas and remove the permanent font/editor/settings toolbar and lower expandable controls from the reading layout.

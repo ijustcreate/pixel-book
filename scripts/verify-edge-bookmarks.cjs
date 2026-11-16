@@ -9,7 +9,7 @@ const assert=require('node:assert/strict'),fs=require('node:fs/promises'),path=r
   const capture=async name=>{const b=await page.evaluate(()=>canvas.toDataURL().split(',')[1]);await fs.writeFile(path.join(output,name+'.png'),Buffer.from(b,'base64'));};
   try{
     if(!profile)await page.goto(process.argv[2]||'http://127.0.0.1:4174/');await page.waitForFunction(()=>loaded,null,{timeout:60000});
-    await page.evaluate(()=>{$('#shelf').close();closedEdge=null;});
+    await page.evaluate(()=>{$('#shelf').close();closedEdge=null;bookShelfMode=false;bookTableMode=false;});
     const initial=await page.evaluate(()=>{
       spread=5;for(const item of allInserts())Object.assign(itemMounts.get(item.sheet),{outside:false,pageNumber:99999,taped:false});
       const positions=[{page:10,u:.35,v:0,edge:'top'},{page:10,u:.65,v:1,edge:'bottom'},{page:9,u:1,v:.3,edge:'left'},{page:10,u:1,v:.75,edge:'right'}];
@@ -39,6 +39,7 @@ const assert=require('node:assert/strict'),fs=require('node:fs/promises'),path=r
       let clickable=false;for(let y=h.y-h.h/2;y<h.y+h.h/2&&!clickable;y+=2)for(let x=h.x-h.w/2;x<h.x+h.w/2;x+=2)if(itemHit({x,y})===h){clickable=true;break;}
       return {edge:itemState(h.item).edgeMark.edge,clickable};
     }));assert.ok(rightTips.every(t=>t.clickable),JSON.stringify(rightTips));
+    await require('./reader-shell-test-tools.cjs')(page,'#close-book');
     await page.locator('#close-book').click();await page.waitForFunction(()=>!coverMotion&&!!closedEdge);
     await capture('closed-3d-tabs');
     const tab=await page.evaluate(()=>{
@@ -47,6 +48,7 @@ const assert=require('node:assert/strict'),fs=require('node:fs/promises'),path=r
         for(let y=Math.min(...ys);y<=Math.max(...ys);y+=2)for(let x=Math.min(...xs);x<=Math.max(...xs);x+=2){const h=closedBooks3D.hitFace({x,y});if(h?.bookmarkPage!==undefined)return{x,y,page:h.bookmarkPage};}
       }throw new Error('Closed-book bookmarks not clickable');
     });
+    await page.evaluate(()=>document.querySelector('#reader-tools-panel')?.hidePopover());
     const closedRect=await page.locator('#book').boundingBox();await page.mouse.click(closedRect.x+tab.x/1000*closedRect.width,closedRect.y+tab.y/680*closedRect.height);
     await page.waitForFunction(target=>!coverMotion&&!closedEdge&&spread===Math.ceil(target/2)&&!motion&&!queuedTurns.length,tab.page,{timeout:20000});
     assert.deepEqual(errors,[]);console.log(JSON.stringify({edges:4,hidden,clickNavigation:true,reload:true,shelfRestore:true,errors,output}));

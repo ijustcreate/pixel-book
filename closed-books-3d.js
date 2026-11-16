@@ -18,7 +18,7 @@ class ClosedBooks3D {
       const old=table?this.layout[book.id]:null;
       const finite=(key,fallback)=>Number.isFinite(old?.[key])?Math.max(-2000,Math.min(2000,old[key])):fallback;
       return {book,id:book.id,x:finite('x',(i%3-1)*380),z:finite('z',Math.floor(i/3)*500),
-        y:finite('y',0),angle:finite('angle',i%2?.05:-.04),shelved:old?.location==='shelf',shelfOrder:finite('shelfOrder',i),height:ClosedBooks3D.thickness(book.pageCount),width:450*bookFormatRatio(book),length:450};
+        y:finite('y',0),angle:finite('angle',i%2?.05:-.04),shelved:old?.location==='shelf',shelfOrder:finite('shelfOrder',i),height:ClosedBooks3D.thickness(physicalPageCount(book)),...closedBookDimensions(book)};
     });
     if(!table&&this.models[0])Object.assign(this.models[0],{x:0,z:0,y:0,angle:0});
     this.selected=this.models.find(m=>m.id===selected)||this.models[0]||null;

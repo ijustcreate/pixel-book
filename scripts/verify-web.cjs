@@ -11,7 +11,12 @@ const path = require('node:path');
   const errors = [];
   page.on('pageerror', error => errors.push(error.message));
   page.on('response', response => { if(response.status() >= 400) errors.push(`${response.status()} ${response.url()}`); });
-  const ready = async() => {await page.waitForFunction(() => document.querySelector('#loading')?.hidden, null, { timeout: 60000 });await page.evaluate(()=>{$('#shelf').close();$('.reader-tools').open=true;});};
+  const ready = async() => {
+    await page.waitForFunction(() => document.querySelector('#loading')?.hidden, null, { timeout: 60000 });
+    await page.evaluate(()=>$('#shelf').close());
+    await page.locator('#reader-tools-open').click();
+    await page.locator('#reader-tab-book').click();
+  };
   try {
     await page.goto(url, { waitUntil: 'domcontentloaded' });
     await ready();
@@ -20,7 +25,8 @@ const path = require('node:path');
     await page.waitForFunction(() => spread === 1 && !motion);
     await page.locator('#previous').click();
     await page.waitForFunction(() => spread === 0 && !motion);
-    await page.getByText('Book options', {exact:true}).click();
+    await page.locator('#reader-tools-open').click();
+    await page.locator('#reader-tab-book').click();
     await page.locator('#book-name').fill('Web shelf original');
     await page.locator('#book-name').dispatchEvent('input');
     await page.locator('#save-book').click();

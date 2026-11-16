@@ -56,7 +56,7 @@ async function registerBookProtocol() {
 
 function createWindow() {
   const window = new BrowserWindow({
-    title: 'Pixel Book',
+    title: 'Pixel Book '+app.getVersion(),
     icon: path.join(__dirname, 'assets', 'buook-icon-v1.png'),
     width: 1180,
     height: 900,
@@ -76,6 +76,7 @@ function createWindow() {
     return { action: 'deny' };
   });
   window.webContents.on('will-navigate', event => event.preventDefault());
+  window.webContents.on('page-title-updated',event=>{event.preventDefault();window.setTitle('Pixel Book '+app.getVersion());});
   window.loadURL('book://app/index.html');
 }
 

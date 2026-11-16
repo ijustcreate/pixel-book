@@ -35,7 +35,7 @@ const {chromium,_electron}=require('playwright'),assert=require('node:assert/str
     const r=canvas.getBoundingClientRect();return{u:g.u,v:g.v,p:motion.progress,held:{x:r.left+held.x*r.width/W,y:r.top+held.y*r.height/H},top:project(c.at(-1),0),bottom:project(c.at(-1),1),pins:[g.pinX,g.pinY]};
    });
    assert.ok(Math.abs(pose.u-.9)<.01&&Math.abs(pose.v-v)<.01,JSON.stringify(pose));
-   assert.ok(Math.hypot(pose.held.x-(target.x-side*170),pose.held.y-(target.y+(v<.5?25:-25)))<2,'Held material point slipped '+JSON.stringify({side,v,target,pose}));
+   assert.ok(Math.abs(pose.held.x-(target.x-side*170))<2,'Horizontal material grip slipped '+JSON.stringify({side,v,target,pose}));
    if(side===1)await page.screenshot({path:path.join(output,`grab-${v}.png`)});
    await page.mouse.up();await page.waitForFunction(()=>!motion);results.push({side,...pose});
   }
@@ -43,6 +43,19 @@ const {chromium,_electron}=require('playwright'),assert=require('node:assert/str
   const click=await page.evaluate(()=>{spread=5;updateControls();draw();const q=project(sampleChain(resting(1,1-spread/(spreadCount()-1)),.9),.5),r=canvas.getBoundingClientRect();return{x:r.left+q.x*r.width/W,y:r.top+q.y*r.height/H};});
   await page.mouse.move(click.x,click.y);await page.mouse.down();await page.mouse.move(click.x-12,click.y);await page.mouse.up();await page.waitForFunction(()=>!motion);assert.equal(await page.evaluate(()=>spread),5);
   await page.mouse.click(click.x,click.y);await page.waitForFunction(()=>!motion);assert.equal(await page.evaluate(()=>spread),6);
+  // Releasing just past halfway completes the turn even when the grip remains
+  // on the original side of the spine, as a physical leaf does.
+  const midRelease=await page.evaluate(()=>{
+    spread=5;motion=null;drag=null;begin(1,true);motion.progress=.5;
+    const hinge=CX+bookState().shift*pagePerspective(.5).hinge;
+    motion.grab={u:.9,v:.5,direction:1,release:1,lag:0,hand:{x:hinge+45,y:(TOP+BOTTOM)/2}};
+    const chain=turnChain(1,.5),held=project(sampleChain(chain,.9),.5);
+    drag={x:held.x,y:held.y,direction:1,moved:true};
+    canvas.dispatchEvent(new PointerEvent('pointerup',{bubbles:true,pointerId:1}));
+    return{heldX:held.x,hinge,progress:motion?.progress};
+  });
+  assert.ok(midRelease.heldX>midRelease.hinge+6,'Test grip accidentally crossed the spine');
+  await page.waitForFunction(()=>!motion);assert.equal(await page.evaluate(()=>spread),6,'A page released beyond halfway snapped back');
   await page.click('#shelf-open');assert.equal(await page.evaluate(()=>bookShelfMode),true);
   assert.deepEqual(errors,[]);console.log(JSON.stringify({shelf,results,errors,output}));
  }finally{await browser.close();}

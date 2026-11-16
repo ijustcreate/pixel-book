@@ -60,3 +60,7 @@ body.reader-shell #page-workshop { width:min(1240px,94vw); max-width:94vw; heigh
 body.reader-shell #page-workshop::backdrop { background:#03070970; backdrop-filter:none; }
 @media(max-width:650px){body.reader-shell .library-toolbar { left:8px; right:8px; top:8px; gap:4px; }body.reader-shell .library-toolbar button { padding:8px; font-size:10px; }body.reader-shell #reader-book-name { font-size:12px; padding:0 5px; max-width:34vw; }#reader-tools-panel { right:12px; top:52px; max-height:calc(100dvh - 130px); padding:14px; }body.reader-shell #status { bottom:72px; left:12px; max-width:90vw; }body.reader-shell #page-workshop { height:90dvh; max-height:90dvh; }body.reader-shell main .book-stage { width:min(112vw,calc((100dvh - 104px)*1.8)); }}
 @media(max-height:540px){#reader-tools-panel { top:48px; max-height:calc(100dvh - 110px); }body.reader-shell .library-toolbar { top:6px; }body.reader-shell .reader-navigation { bottom:6px; }}
+
+body.reader-shell .reader-navigation nav { width:auto; }
+body.reader-shell .reader-navigation button { font:12px Georgia,serif; white-space:nowrap; }
+#reading-pagination { max-width:100%; }

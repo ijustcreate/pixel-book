@@ -4,6 +4,7 @@ const DEFAULT_BOOK_FONT='alagard';
 const fontId=name=>name.toLowerCase().replace(/\.(ttf|otf)$/,'').replace(/[^a-z0-9]+/g,'-');
 const selectedBookFont=()=>bookContent.bookFont||DEFAULT_BOOK_FONT;
 const bookFontFamily=()=>bookFonts.get(selectedBookFont())?.family?'"'+bookFonts.get(selectedBookFont()).family+'", Georgia, serif':'Georgia, serif';
+const bookFontFamilyFor=book=>bookFonts.get(book.bookFont||DEFAULT_BOOK_FONT)?.family?'"'+bookFonts.get(book.bookFont||DEFAULT_BOOK_FONT).family+'", Georgia, serif':'Georgia, serif';
 const hasBookFont=()=>selectedBookFont()!=='original';
 function migrateDefaultBookFont(){
   if(localStorage.getItem('pixel-book-alagard-default-v1'))return;
@@ -12,9 +13,10 @@ function migrateDefaultBookFont(){
   localStorage.setItem('keepers-book-shelf-v1',JSON.stringify(savedBooks));persistBookContent();
   localStorage.setItem('pixel-book-alagard-default-v1','1');
 }
-async function registerBookFont(entry,buffer=null){
+async function registerBookFont(entry,buffer=null,eager=true){
   const face=new FontFace(entry.family,buffer||'url("'+entry.url+'")');
-  await face.load();document.fonts.add(face);bookFonts.set(entry.id,{...entry,face});
+  document.fonts.add(face);bookFonts.set(entry.id,{...entry,face});
+  if(eager)await face.load();
 }
 function fontDatabase(){
   return new Promise((resolve,reject)=>{const request=indexedDB.open('pixel-book-fonts-v1',1);request.onupgradeneeded=()=>request.result.createObjectStore('files',{keyPath:'id'});request.onsuccess=()=>resolve(request.result);request.onerror=()=>reject(request.error);});
@@ -22,10 +24,13 @@ function fontDatabase(){
 async function loadBookFonts(){
   const publicFonts=await fetch('assets/fonts/manifest.json?v=2').then(r=>r.json());
   const entries=[...publicFonts];
-  await Promise.allSettled(entries.map(entry=>registerBookFont(entry)));
+  // Register every face so the font picker can list it, but only fetch the
+  // active face during startup. Shelf covers are already baked, and each
+  // saved book loads its own face when opened.
+  await Promise.allSettled(entries.map(entry=>registerBookFont(entry,null,entry.id===selectedBookFont())));
   try{
     const db=await fontDatabase(),files=await new Promise((resolve,reject)=>{const request=db.transaction('files').objectStore('files').getAll();request.onsuccess=()=>resolve(request.result);request.onerror=()=>reject(request.error);});db.close();
-    await Promise.allSettled(files.map(entry=>registerBookFont(entry,entry.buffer)));
+    await Promise.allSettled(files.map(entry=>registerBookFont(entry,entry.buffer,false)));
   }catch{/* Font imports can still work for the session if storage is unavailable. */}
   syncBookFontControls();
 }
@@ -44,9 +49,11 @@ function syncBookFontControls(){
 }
 async function chooseBookFont(id){
   if(id!=='original'&&!bookFonts.has(id))return;
+  if(id!=='original')await bookFonts.get(id).face.load();
   bookContent.bookFont=id;setBookResolution();persistBookContent();
   const saved=savedBooks.find(book=>book.id===activeBookId);
   if(saved){saved.bookFont=id;localStorage.setItem('keepers-book-shelf-v1',JSON.stringify(savedBooks));}
+  if(typeof reflowSelectedReadingFont==='function'&&isReadingEdition())reflowSelectedReadingFont();
   syncBookFontControls();textures.clear();shadedTextures.clear();draw();
   if(document.querySelector('#reading-view').open)renderReadingPage();
 }

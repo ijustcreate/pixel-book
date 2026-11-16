@@ -1,6 +1,6 @@
 {
   "name": "pixel-book",
-  "version": "1.0.31",
+  "version": "1.0.46",
   "private": true,
   "description": "A local, editable keeper's book.",
   "main": "main.cjs",
@@ -12,7 +12,8 @@
   },
   "devDependencies": {
     "electron": "44.9.0",
-    "electron-builder": "26.15.3"
+    "electron-builder": "26.15.3",
+    "playwright": "^1.64.1"
   },
   "build": {
     "appId": "com.keepersbook.desktop",
@@ -23,6 +24,7 @@
     "files": [
       "index.html",
       "script.js",
+      "page-surface.js",
       "ink.js",
       "closed-books-3d.js",
       "starter-library.js",
@@ -32,6 +34,10 @@
       "page-workshop.js",
       "reader-shell.js",
       "reader-focus.js",
+      "reading-editions.js",
+      "book-typography.js",
+      "book-layout.js",
+      "play-layout.js",
       "reader-shell.css",
       "book-art.js",
       "book-feel.js",
@@ -45,11 +51,15 @@
       "target": [
         {
           "target": "nsis",
-          "arch": ["x64"]
+          "arch": [
+            "x64"
+          ]
         },
         {
           "target": "portable",
-          "arch": ["x64"]
+          "arch": [
+            "x64"
+          ]
         }
       ]
     },

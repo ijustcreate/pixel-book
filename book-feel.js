@@ -1,6 +1,8 @@
 'use strict';
 // Quiet, local paper sounds: no downloads, tracks or recurring sound loop.
 const bookFeel={context:null,noise:null,lastSound:-Infinity,sound:localStorage.getItem('pixel-book-page-sounds-v1')!=='off',movement:localStorage.getItem('pixel-book-page-movement-v1')!=='off'};
+const bookStage=document.querySelector('.book-stage');
+const reducedMotion=matchMedia('(prefers-reduced-motion: reduce)');
 function unlockBookAudio(){
   if(!bookFeel.sound)return;
   try{const Audio=window.AudioContext||window.webkitAudioContext;if(!Audio)return;if(!bookFeel.context)bookFeel.context=new Audio();if(bookFeel.context.state==='suspended')bookFeel.context.resume().catch(()=>{});}catch{}
@@ -19,10 +21,13 @@ function playPaperSound(fast=false){
   source.connect(filter).connect(highpass).connect(gain).connect(audio.destination);source.start(now);source.stop(now+duration+.03);source.onended=()=>{source.disconnect();filter.disconnect();highpass.disconnect();gain.disconnect();};
 }
 function updateBookResponse(){
-  const stage=document.querySelector('.book-stage');
-  if(!motion||!bookFeel.movement||matchMedia('(prefers-reduced-motion: reduce)').matches){stage.style.removeProperty('transform');return;}
+  if(!motion||!bookFeel.movement||reducedMotion.matches){
+    if(bookStage.style.transform)bookStage.style.removeProperty('transform');
+    return;
+  }
   const p=motion.progress,envelope=Math.sin(Math.PI*p),sign=motion.direction;
-  stage.style.transform=`translate3d(${sign*.42*envelope*Math.sin(p*Math.PI*3)}px,${.26*envelope*Math.sin(p*Math.PI*2)}px,0) rotate(${sign*.025*envelope*Math.sin(p*Math.PI*2)}deg)`;
+  const transform=`translate3d(${sign*.42*envelope*Math.sin(p*Math.PI*3)}px,${.26*envelope*Math.sin(p*Math.PI*2)}px,0) rotate(${sign*.025*envelope*Math.sin(p*Math.PI*2)}deg)`;
+  if(bookStage.style.transform!==transform)bookStage.style.transform=transform;
 }
 function initBookFeelControls(){
   for(const [key,labelText,storage] of [['sound','Quiet page sounds','pixel-book-page-sounds-v1'],['movement','Subtle book movement','pixel-book-page-movement-v1']]){

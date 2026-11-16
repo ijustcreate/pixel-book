@@ -11,6 +11,8 @@ playwright-report/
 
 # Private/local reference captures are not project artwork
 Ref/
+Book working files/
+*.url
 
 # Local settings, credentials, logs, and saves
 .env

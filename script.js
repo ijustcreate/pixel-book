@@ -29,9 +29,9 @@ const textures = new Map();
 const shadedTextures = new Map();
 const userImages=new Map();
 let editorMode='',editorPageList='',selectedEditPage=null;
-let itemHits = [], inspection = null, itemDrag = null;
+let itemHits = [], inspection = null, itemDrag = null, insertLandingRaf = 0;
 let spread = 0, motion = null, raf = 0, drag = null, autoTimer = 0;
-let loaded = false, autoDirection = 1;
+let loaded = false, autoDirection = 1, hoveredInsert=null;
 let closedEdge=null,coverMotion=null,closedFlipMotion=null;
 let spineView=false,spineMotion=null;
 let bookTableMode=false;
@@ -59,13 +59,8 @@ async function load() {
     return;
   }
   try {
-    await openArtDatabase();
-    await loadBookFonts();
-    await loadStarterLibrary();
-    seedStarterBooks();
-    migrateDefaultBookFont();
-    migrateStarterEditions();pageCount=bookContent.pageCount;setBookResolution();
-    await Promise.all(Object.entries({
+    const ready=Promise.all([openArtDatabase(),loadBookFonts(),loadStarterLibrary(),loadShelfMaterials()]);
+    await Promise.all([Promise.all(Object.entries({
       board:'inside-board-v3.png',binding:'open-spine-v3.png',stack:'page-stack-v2.png',leather:'leather-stack-v2.png',
       a:'page-a-v2.png', b:'page-b-v2.png', c:'page-c-v2.png',
       front:'outside-board-v3.png',closedSpine:'closed-spine-v3.png',
@@ -73,9 +68,14 @@ async function load() {
     }).map(async ([key,file]) => {
       const img = new Image(); img.src = 'assets/'+file;
       await img.decode(); assets[key] = img;
-    }));
+    })),ready]);
+    seedStarterBooks();migrateDefaultBookFont();migrateStarterEditions();restoreReadingEditions();
+    pageCount=bookContent.pageCount;setBookResolution();
     for(const key of ['a','b','c'])assets[key]=clearDarkPageFringe(assets[key]);
     assets.leather = edgeTexture(assets.leather);
+    // Only the central spine strip is ever rendered; avoid recolouring the
+    // surrounding 764 transparent columns for each shelf book.
+    const spineStrip=spriteSurface(260,assets.spine.height);spineStrip.getContext('2d').drawImage(assets.spine,380,0,260,assets.spine.height,0,0,260,assets.spine.height);assets.spine=spineStrip;
     Object.assign(baseAssets,assets);
     assignSpineOrnaments();
     $('#outside-color').value=bookContent.palette.outside;
@@ -86,7 +86,8 @@ async function load() {
     loaded = true;
     $('#book-name').value=bookName;
     loading.hidden = true;
-    closedEdge='front';updateControls();draw();showBookShelf();
+    closedEdge='front';showBookShelf();
+    setTimeout(()=>{for(const book of starterLibrary.values())if(!book.legacy)for(const figure of book.pages[0]?.sourceFigures||[])getSourceIllustration(figure.src);},0);
   } catch(error) {
     loading.replaceChildren(
       document.createTextNode(`A book sprite could not be loaded (${error.message}). `),
@@ -154,7 +155,7 @@ const entries = [
 function loadBookContent() {
   try {
     const saved=JSON.parse(localStorage.getItem(contentKey)||'{}');
-return {insertMounts:saved.insertMounts||[],pageFormat:saved.pageFormat,spineOrnaments:saved.spineOrnaments,bookFont:saved.bookFont||DEFAULT_BOOK_FONT,starterId:saved.starterId||null,edition:saved.edition,sourcePageCount:saved.sourcePageCount,name:saved.name||'The Keeper’s Book',pageCount:saved.pageCount||28,pages:saved.pages||{},edgeBookmarks:Array.isArray(saved.edgeBookmarks)?saved.edgeBookmarks:[],covers:{front:{},back:{},...(saved.covers||{})},palette:{outside:'#9b382d',inside:'#c85e68',metal:'gold',...(saved.palette||{})}};
+return {readingLayoutKey:saved.readingLayoutKey,originalState:saved.originalState,readingSource:saved.readingSource,readableState:saved.readableState,paginationChoice:saved.paginationChoice,insertMounts:saved.insertMounts||[],pageFormat:saved.pageFormat,spineOrnaments:saved.spineOrnaments,bookFont:saved.bookFont||DEFAULT_BOOK_FONT,starterId:saved.starterId||null,edition:saved.edition,sourcePageCount:saved.sourcePageCount,name:saved.name||'The Keeper’s Book',pageCount:saved.pageCount||28,pages:saved.pages||{},edgeBookmarks:Array.isArray(saved.edgeBookmarks)?saved.edgeBookmarks:[],covers:{front:{},back:{},...(saved.covers||{})},palette:{outside:'#9b382d',inside:'#c85e68',metal:'gold',...(saved.palette||{})}};
   } catch { return {name:'The Keeper’s Book',pageCount:28,pages:{},covers:{front:{},back:{}},palette:{outside:'#9b382d',inside:'#c85e68',metal:'gold'}}; }
 }
 
@@ -194,6 +195,7 @@ function coverMaterialMask(source,kind,data) {
   const fabric=kind==='board'?liningRegion(source,data):null;
   for(let y=0;y<source.height;y++)for(let x=0;x<source.width;x++) {
     const pixel=y*source.width+x,i=pixel*4,u=x/source.width,v=y/source.height;
+    if(!data[i+3])continue;
     const r=data[i],g=data[i+1],b=data[i+2];
     let lining=0,metal=0;
     if(kind==='board')lining=fabric[pixel];
@@ -211,7 +213,11 @@ function coverMaterialMask(source,kind,data) {
   materialMasks.set(source,mask);return mask;
 }
 
+const tintedSpriteCache=new WeakMap();
 function tintCoverSprite(source,kind,palette,hardwareOnly=false) {
+  let cache=tintedSpriteCache.get(source);if(!cache){cache=new Map();tintedSpriteCache.set(source,cache);}
+  const key=(kind==='symbols'?[kind,palette.metal]:[kind,palette.outside,palette.inside,palette.metal,hardwareOnly]).join(':');
+  if(cache.has(key))return cache.get(key);
   const surface=document.createElement('canvas');surface.width=source.width;surface.height=source.height;
   const p=surface.getContext('2d',{willReadFrequently:true});p.drawImage(source,0,0);
   const frame=p.getImageData(0,0,surface.width,surface.height),data=frame.data;
@@ -224,7 +230,7 @@ function tintCoverSprite(source,kind,palette,hardwareOnly=false) {
     const r=data[i],g=data[i+1],b=data[i+2],alpha=data[i+3];if(alpha===0)continue;
     const pixel=i/4,liningWeight=mask[pixel*2]/255,metalWeight=mask[pixel*2+1]/255;
     if(hardwareOnly)data[i+3]=Math.round(alpha*metalWeight);
-    const l=luminance([r,g,b]);
+    const l=r*.2126+g*.7152+b*.0722;
     for(let c=0;c<3;c++) {
       const leather=palette.outside==='#9b382d'?data[i+c]:outside[c]*l/outsideReference;
       const fabric=palette.inside==='#c85e68'?data[i+c]:inside[c]*l/insideReference;
@@ -232,12 +238,14 @@ function tintCoverSprite(source,kind,palette,hardwareOnly=false) {
       data[i+c]=clamp(mix(mix(leather,fabric,liningWeight),plated,metalWeight),0,255);
     }
   }
-  p.putImageData(frame,0,0);return surface;
+  p.putImageData(frame,0,0);
+  if(cache.size>=12)cache.delete(cache.keys().next().value);cache.set(key,surface);return surface;
 }
 
+let appliedPaletteKey='';
 function applyBookPalette(redraw=true) {
   if(!baseAssets.board)return;
-  const palette=bookContent.palette;
+  const palette=bookContent.palette;appliedPaletteKey=JSON.stringify(palette);
   assets.board=tintCoverSprite(baseAssets.board,'board',palette);
   assets.binding=tintCoverSprite(baseAssets.binding,'binding',palette);
   assets.frame=assembledCover(assets.board,assets.binding);
@@ -318,15 +326,17 @@ function viewport(number) {
       drawSourceTitle(p,custom.titlePage);
     }else if(custom.novel&&custom.tocRows){
       drawSourceContents(p,number);
+    }else if(custom.novel&&custom.playAct){
+      drawPlayAct(p,custom);drawPageNumber(p,number,custom.pageNumberPlacement||'bottom-center',hand);
     }else if(custom.novel){
       let bodyTop=drawSourceFigures(p,custom),body=custom.body||'';
-      if(custom.chapterOpening&&body.startsWith(custom.chapterOpening)){
-        p.save();p.font='16px '+bookFontFamily();p.fillStyle=custom.ink||'#2b2118';p.textAlign='center';p.textBaseline='top';p.fillText(custom.chapterOpening,200,30,320);p.restore();
-        body=body.slice(custom.chapterOpening.length).trim();bodyTop=Math.max(bodyTop,77);
-      }
+      drawChapterOpening(p,custom);
       const layout=layoutBookBody(custom,p);
-      p.fillStyle=custom.ink||'#241c16';p.font=layout.size+'px '+bookFontFamily();p.textBaseline='top';
-      layout.lines.forEach((line,i)=>p.fillText(line,(layout.x??40)+(layout.indents?.[i]||0),layout.top+i*layout.lineHeight));
+      p.fillStyle=custom.ink||'#241c16';p.font=layout.size+'px '+(layout.family||bookFontFamily());p.textBaseline='top';
+      if(layout.runs){
+        if(custom.playContinuation){p.save();p.textAlign='center';p.fillStyle='#806143';p.font='8px '+bookFontFamily();p.fillText(custom.playContinuation+' continued',200,12);p.restore();}
+        for(const run of layout.runs){p.save();p.textAlign=run.center?'center':'left';p.font=run.size+'px '+bookFontFamily();p.fillStyle=run.kind==='speaker'?'#75472b':run.kind==='direction'?'#70563d':custom.ink||'#241c16';p.fillText(run.text,run.x,run.y);p.restore();}
+      }else layout.lines.forEach((line,i)=>p.fillText(line,(layout.x??40)+(layout.indents?.[i]||0),layout.top+i*layout.lineHeight));
       drawPageNumber(p,number,custom.pageNumberPlacement||'bottom-center',hand);
     } else if(role==='contents') {
       p.fillStyle=inkColor;ink(p,'CONTENTS',45,31,1.05,hand);
@@ -510,7 +520,7 @@ function litViewport(number,chain,side,turnShade=0) {
   }
   const surface=shadedTextures.get(number),p=surface.getContext('2d');
   const slope=Math.atan2(Math.abs(chain[1].z-chain[0].z),Math.abs(chain[1].x-chain[0].x));
-  const lightingKey=side+':'+slope+':'+turnShade;
+  const lightingKey=side+':'+slope+':'+turnShade+':'+(chain[0].sheet?chain.map(p=>p.z.toFixed(2)).join(','):'');
   if(surface.lightingBase===base&&surface.lightingKey===lightingKey)return surface;
   surface.lightingBase=base;surface.lightingKey=lightingKey;
   p.setTransform(base.width/PAGE_W,0,0,base.height/PAGE_H,0,0);
@@ -518,7 +528,9 @@ function litViewport(number,chain,side,turnShade=0) {
   const light=p.createLinearGradient(0,0,PAGE_W,0);
   for(let i=0;i<=30;i++) {
     const distance=side<0?1-i/30:i/30;
-    const alpha=clamp((.24+.14*clamp(slope/(Math.PI/6)))*Math.exp(-distance*13)+.04*distance*distance+turnShade,0,.52);
+    const index=Math.min(SEGMENTS-1,Math.floor(distance*SEGMENTS)),a=chain[index],b=chain[index+1];
+    const curveShade=chain[0].sheet ? .115*Math.abs(b.z-a.z)/Math.max(.001,Math.hypot(b.x-a.x,b.z-a.z)):0;
+    const alpha=clamp((.24+.14*clamp(slope/(Math.PI/6)))*Math.exp(-distance*13)+.04*distance*distance+turnShade+curveShade,0,.52);
     light.addColorStop(i/30,`rgba(63,22,40,${alpha})`);
   }
   p.globalCompositeOperation='source-atop';p.fillStyle=light;p.fillRect(0,0,PAGE_W,PAGE_H);p.globalCompositeOperation='source-over';
@@ -535,7 +547,7 @@ const pageBlockDepth=amount=>{
 };
 const bindingRoll=amount=>.10+.55*smooth(clamp(amount)/.25)+.35*smooth((clamp(amount)-.70)/.30);
 const bindingFlex=()=>clamp(Math.sqrt(pageThickness()),.2,1);
-const bindingRadius=amount=>(.24+.10*smooth(amount))*bindingFlex();
+const bindingRadius=amount=>(.18+.08*smooth(amount))*bindingFlex();
 const bindingRise=(amount,u)=>{
   const t=clamp(u/bindingRadius(amount));
   return mix(smooth(t),Math.sin(Math.PI/2*t),bindingRoll(amount));
@@ -577,84 +589,136 @@ function resting(side, amount) {
   });
 }
 
-function turnChain(direction,progress) {
-  const sourceSide=direction, targetSide=-direction;
-  const sourceAmount=sourceSide<0?spread/(spreadCount()-1):1-spread/(spreadCount()-1);
-  const targetSpread=motion?.direction===direction?turnDestination():spread+direction;
-  const targetAmount=targetSide<0?targetSpread/(spreadCount()-1):1-targetSpread/(spreadCount()-1);
-  const from=resting(sourceSide,clamp(sourceAmount));
-  const to=resting(targetSide,clamp(targetAmount));
-  const theta=turnAngle(progress);
-  // A curved chain peels away from its resting profile, traverses the spine,
-  // then blends into the opposite stack in the last 35 percent of the turn.
-  const startBlend=smooth(progress/.35),endBlend=smooth((progress-.65)/.35);
-  const chain=[];let x=0,z= mix(from[0].z,to[0].z,progress);
-  chain.push({x:0,z,u:0});
-  for(let i=0;i<SEGMENTS;i++) {
-    const u=(i+.5)/SEGMENTS;
-    // The free edge lags behind the hinge. A broad C-shaped curl remains
-    // visible at the upright position instead of collapsing into a flat line.
-    const flex=.85*Math.sin(2*Math.PI*u)*Math.sin(theta);
-    const a=theta+flex;
-    x+=direction*Math.cos(a)*PAGE_W/SEGMENTS;
-    z+=Math.sin(a)*PAGE_W/SEGMENTS;
-    const index=i+1;
-    chain.push({x:mix(mix(from[index].x,x,startBlend),to[index].x,endBlend),
-      z:mix(mix(from[index].z,z,startBlend),to[index].z,endBlend),u:index/SEGMENTS});
+// A smoothly varying developable bend spreads curvature through the sheet.
+// Sampling is analytic in material coordinates, shared by art, text and inserts.
+const TURN_ROWS=24,TURN_HEIGHT=BOTTOM-TOP;
+// A page is a single sheet, so a release blend must never let two distant
+// material sections occupy the same point. Test each vertical material row
+// for crossings in the fold plane, then compare the interpolated height to
+// ignore harmless crossings that pass above/below one another.
+function pageCurveSelfIntersects(sheet,rows=8,columns=36){
+  const orient=(a,b,c)=>(b.x-a.x)*(c.z-a.z)-(b.z-a.z)*(c.x-a.x);
+  for(let row=0;row<=rows;row++){
+    const v=row/rows,points=Array.from({length:columns+1},(_,i)=>sheet.evaluate(i/columns,v));
+    for(let i=0;i<columns-1;i++)for(let j=i+2;j<columns;j++){
+      const a=points[i],b=points[i+1],c=points[j],d=points[j+1];
+      if((Math.max(a.x,b.x)<Math.min(c.x,d.x)-.01)||(Math.max(c.x,d.x)<Math.min(a.x,b.x)-.01)||
+         (Math.max(a.z,b.z)<Math.min(c.z,d.z)-.01)||(Math.max(c.z,d.z)<Math.min(a.z,b.z)-.01))continue;
+      const abC=orient(a,b,c),abD=orient(a,b,d),cdA=orient(c,d,a),cdB=orient(c,d,b);
+      if(abC*abD>=-1e-8||cdA*cdB>=-1e-8)continue;
+      const den=(b.x-a.x)*(d.z-c.z)-(b.z-a.z)*(d.x-c.x);
+      if(Math.abs(den)<1e-8)continue;
+      const t=((c.x-a.x)*(d.z-c.z)-(c.z-a.z)*(d.x-c.x))/den;
+      const s=((c.x-a.x)*(b.z-a.z)-(c.z-a.z)*(b.x-a.x))/den;
+      const ya=mix(a.y,b.y,t),yb=mix(c.y,d.y,s);
+      if(Math.abs(ya-yb)<1.5)return true;
+    }
   }
-  if(motion?.grab&&motion.direction===direction)for(const point of chain)point.manualTurn=motion.grab;
-  return chain;
+  return false;
 }
-
-function turnAngle(progress) {
-  // 15-degree peel, upright at halfway, through 160 degrees before settling.
-  // C1 Hermite spans keep angular velocity continuous across these landmarks.
-  const t=sine(progress),knots=[0,.5,.85,1],values=[15,90,160,180],slopes=[100,190,160,0];
-  let i=t<.5?0:t<.85?1:2;
-  const h=knots[i+1]-knots[i],u=(t-knots[i])/h;
-  const angle=(2*u*u*u-3*u*u+1)*values[i]+(u*u*u-2*u*u+u)*h*slopes[i]
-    +(-2*u*u*u+3*u*u)*values[i+1]+(u*u*u-u*u)*h*slopes[i+1];
-  return angle*Math.PI/180;
+let paperSurfaceRenderer=null,paperSurfaceFrame=false;
+function paperRenderer(){
+  if(!paperSurfaceRenderer){try{paperSurfaceRenderer=new PaperSurfaceRenderer();}catch{paperSurfaceRenderer=null;}}
+  if(!paperSurfaceRenderer?.ready)paperSurfaceRenderer=new CanvasPaperSurfaceRenderer();
+  return paperSurfaceRenderer;
 }
-
+const surfaceDepth=p=>p.y*.82+pageElevation(p.z);
+function surfaceVertex(p){
+  const q=projectSheetPoint(p);return {...q,depth:surfaceDepth(p),light:p.light??1};
+}
+function turnChain(direction,progress) {
+  const sourceAmount=direction<0?spread/(spreadCount()-1):1-spread/(spreadCount()-1);
+  const targetSpread=motion?.direction===direction?turnDestination():spread+direction;
+  const targetAmount=direction>0?targetSpread/(spreadCount()-1):1-targetSpread/(spreadCount()-1);
+  const grab=motion?.direction===direction?motion.grab:null,release=grab?.release??1;
+  const key=[direction,progress,spread,targetSpread,grab?.diagonal,grab?.pitch,release,grab?.lag,grab?.hand?.x,grab?.hand?.y].join(':');
+  if(motion?.sheetCache?.key===key)return motion.sheetCache.chain;
+  let supports=motion?.supports;
+  if(!supports||supports.direction!==direction||supports.spread!==spread||supports.targetSpread!==targetSpread){
+    supports={direction,spread,targetSpread,from:resting(direction,clamp(sourceAmount)),to:resting(-direction,clamp(targetAmount))};
+    if(motion)motion.supports=supports;
+  }
+  const {from,to}=supports;
+  const blend=smooth(progress),lengths=[];
+  if(!supports.startSlopes){supports.startSlopes=from.slice(0,-1).map((p,i)=>Math.atan2(from[i+1].z-p.z,Math.abs(from[i+1].x-p.x)));supports.endSlopes=to.slice(0,-1).map((p,i)=>Math.atan2(to[i+1].z-p.z,Math.abs(to[i+1].x-p.x)));}
+  for(let i=0;i<SEGMENTS;i++)lengths.push(mix(Math.hypot(from[i+1].x-from[i].x,from[i+1].z-from[i].z),Math.hypot(to[i+1].x-to[i].x,to[i+1].z-to[i].z),blend));
+  // Keep the turn concentrated at its moving crease. A full-leaf width made
+  // every material column edge-on at once, crushing cover art into a ribbon.
+  // A page turns over a broad rolling bend, not a razor-thin hinge. A wider
+  // transition keeps the sheet visibly curved instead of standing edge-on as
+  // a narrow wall for most of a slow drag.
+  const envelope=Math.sin(Math.PI*progress),length=lengths.reduce((a,b)=>a+b,0),width=12+84*envelope*envelope;
+  const center=mix(length+width*.65,-width*.65,progress);
+  const min=-320,step=3,count=Math.ceil((length+900-min)/step),table=[{x:min,z:0}];
+  const peel=smooth(progress/.34),land=smooth((progress-.80)/.20),turnRadians=Math.PI-.14*envelope;
+  for(let i=1;i<=count;i++){
+    const q=min+(i-.5)*step,t=(q-center)/width;
+    const roll=mix(mix(0,turnRadians*(.5+.5*Math.tanh(t)),peel),Math.PI,land);
+    const index=Math.min(SEGMENTS-1,Math.floor(clamp(q/length)*SEGMENTS));
+    const startSlope=supports.startSlopes[index],endSlope=supports.endSlopes[index];
+    // Every tangent stays inside one open half-plane. Its projection on
+    // the turn axis is strictly positive, so the material curve cannot loop
+    // or cross itself. Apply this to every integrated segment, not a sparse
+    // after-the-fact collision sample.
+    const axis=Math.PI*progress,limit=Math.PI/2-.08;
+    const angle=clamp(roll+mix(startSlope,-endSlope,roll/Math.PI)+.075*envelope*smooth((t-1)/2),axis-limit,axis+limit);
+    const last=table[i-1];table.push({x:last.x+Math.cos(angle)*step,z:last.z+Math.sin(angle)*step});
+  }
+  const bend=q=>{const f=clamp((q-min)/step,0,count-.00001),i=Math.floor(f),t=f-i;return{x:mix(table[i].x,table[i+1].x,t),z:mix(table[i].z,table[i+1].z,t)};};
+  // Diagonal curvature changes phase across material rows. A global shear
+  // along the separating coordinate lets the free paper follow vertical pulls
+  // without moving the sewn edge. The inverse row coordinate is exactly
+  // (y - pitch * separation) / TURN_HEIGHT, so rows cannot collide.
+  const tilt=clamp(grab?.diagonal||0,-.12,.12)*release*envelope;
+  const pitch=clamp(grab?.pitch||0,-.18,.18)*release*envelope;
+  const axis=Math.PI*progress,hinge=elevationZ(bindingHingeDepth(bookState().fraction));
+  const evaluate=(u,v)=>{
+    if(progress<=0||progress>=1){const p=sampleItemChain(progress<=0?from:to,u);return{x:p.x,y:v*TURN_HEIGHT,z:p.z};}
+    const materialX=u*length,skew=(v-.5)*TURN_HEIGHT*tilt,anchor=bend(skew),fold=bend(materialX+skew);
+    const x=direction*(fold.x-anchor.x),z=hinge+fold.z-anchor.z;
+    const separation=direction*x*Math.cos(axis)+(z-hinge)*Math.sin(axis);
+    return {x,y:v*TURN_HEIGHT+pitch*separation,z};
+  };
+  const sheet={lengths,progress,direction,evaluate,tilt,pitch,axis,hinge,width,center,releaseWeight:release};
+  Object.defineProperty(sheet,'grid',{get(){const grid=Array.from({length:TURN_ROWS+1},(_,r)=>Array.from({length:SEGMENTS+1},(_,i)=>evaluate(i/SEGMENTS,r/TURN_ROWS)));Object.defineProperty(sheet,'grid',{value:grid});return grid;},configurable:true});
+  const chain=Array.from({length:SEGMENTS+1},(_,i)=>{const p=evaluate(i/SEGMENTS,.5);return{x:p.x,z:p.z,u:i/SEGMENTS,sheet};});
+  if(motion)motion.sheetCache={key,chain};return chain;
+}
+function sheetSample(sheet,u,v) {
+  // Extrapolate the actual edge tangent for free card overhangs.
+  const cu=clamp(u),cv=clamp(v),p=sheet.evaluate(cu,cv);
+  if(u!==cu){const a=sheet.evaluate(cu===0?.002:.998,cv),sign=cu===0?-1:1;
+    for(const k of ['x','y','z'])p[k]+=(p[k]-a[k])*(u-cu)*sign/.002;}
+  if(v!==cv){const a=sheet.evaluate(cu,cv===0?.002:.998),sign=cv===0?-1:1;
+    for(const k of ['x','y','z'])p[k]+=(p[k]-a[k])*(v-cv)*sign/.002;}
+  return p;
+}
+function pageBindingAnchor(v) {
+  // The sewing follows the page block across the flexible spine as leaves
+  // move between boards. At either end it meets that board's inner joint.
+  return coverPoint(mix(BOARD_SEAM,SPINE_END,bookState().fraction),40+445*pagePerspective(v).vertical);
+}
+function projectSheetPoint(p,state=bookState(),widthScale=bookWidthScale()) {
+  const v=p.y/TURN_HEIGHT,perspective=pagePerspective(v),anchor=pageBindingAnchor(v);
+  const elevation=pageElevation(p.z)-bindingHingeDepth(state.fraction);
+  return{x:anchor.x+p.x*perspective.scale*widthScale,
+    y:anchor.y-elevation*(.55+.45*perspective.vertical)};
+}
 function pagePerspective(v) {
   const depth=1/.87-1,scale=1/(1+depth*(1-v));
   return {scale,vertical:v*scale,hinge:scale*(1+depth*.5)};
 }
 
 function project(point,v,state=bookState(),widthScale=bookWidthScale()) {
-  const grab=point.manualTurn;
-  if(grab){
-    // Twist the sheet around its bound edge. Rows away from the material
-    // point being held lag behind it; a middle grab bends symmetrically.
-    // The envelope is zero at both resting poses, including cancellation.
-    const envelope=Math.sin(Math.PI*(motion?.progress||0));
-    const lag=(Math.abs(v-grab.v)-Math.abs(.5-grab.v))*.82*envelope;
-    const x=point.x*grab.direction,z=point.z-grab.hinge;
-    point={...point,x:grab.direction*(x*Math.cos(lag)+z*Math.sin(lag)),
-      z:grab.hinge+z*Math.cos(lag)-x*Math.sin(lag)};
-  }
-  // A homography foreshortens both the far-edge width and the texture rows.
-  // The depth scale is shared by the paper and all of its underlying edges.
-  const elevation=pageElevation(point.z),perspective=pagePerspective(v);
-  const result={x:CX+state.shift*perspective.hinge+point.x*perspective.scale*widthScale,
-    y:mix(TOP-elevation*.55,BOTTOM-elevation,perspective.vertical)-state.rise};
-  if(grab){
-    const weight=Math.pow(clamp(point.u/Math.max(.12,grab.u)),1.5);
-    const row=Math.exp(-2.8*(v-grab.v)*(v-grab.v));
-    result.x+=(grab.pinX||0)*weight*row*(grab.release??1);
-    result.y+=(grab.pinY||0)*weight*row*(grab.release??1);
-  }
-  return result;
+  if(point.sheet)return projectSheetPoint(sheetSample(point.sheet,point.u,v),state,widthScale);
+  return projectSheetPoint({x:point.x,y:v*TURN_HEIGHT,z:point.z},state,widthScale);
 }
 
-const openSpineScale=()=>clamp(ClosedBooks3D.thickness(pageCount)/ClosedBooks3D.thickness(320),.2,2);
+const openSpineScale=()=>clamp(ClosedBooks3D.thickness(physicalPageCount(bookContent))/ClosedBooks3D.thickness(320),.2,2);
 function bookState() {
   const fraction=clamp((spread+turningDistance()*sine(motion?.progress||0))/(spreadCount()-1));
   const coverShift=Math.sin((fraction-.5)*Math.PI)*7;
   const halfSpine=(512-BOARD_SEAM)/1024*940*openSpineScale();
-  // At the first/last spread the text block attaches at the corresponding
-  // edge of the flexible spine, rather than always at its center.
   const shift=(2*fraction-1)*halfSpine*.975+coverShift*Math.pow(BOARD_SEAM/512,3);
   return {fraction,rise:Math.sin(Math.PI*fraction)*17,shift,coverShift};
 }
@@ -766,9 +830,20 @@ function buildTurningSheetDepth(chain) {
 }
 
 function mesh(chain,texture,side,extraShade=0,backTexture=null,rowsOverride=null) {
+  if(chain[0].sheet&&backTexture&&paperRenderer().ready){
+    const renderer=paperRenderer();paperSurfaceFrame=renderer.begin(canvas.width,canvas.height);
+    const sheet=chain[0].sheet;
+    renderer.surface(texture,backTexture,side,96,48,(u,v)=>{
+      const p=sheetSample(sheet,u,v),a=sheetSample(sheet,u-.002,v),b=sheetSample(sheet,u+.002,v);
+      const slope=Math.abs(b.z-a.z)/Math.max(.001,Math.hypot(b.x-a.x,b.y-a.y,b.z-a.z));
+      const hingeSlope=Math.atan2(Math.abs(chain[1].z-chain[0].z),Math.abs(chain[1].x-chain[0].x));
+      const shade=(.24+.14*clamp(hingeSlope/(Math.PI/6)))*Math.exp(-u*13)+.04*u*u+.065*Math.sin(Math.PI*sheet.progress)+.115*slope;
+      const q=surfaceVertex(p);q.light=1-clamp(shade,0,.52);return q;
+    });return;
+  }
   ctx.save();
   // Project each material vertex once, keeping the six readable texture rows.
-  const rows=rowsOverride??(backTexture||texture.pageViewport||texture.width===PAGE_W&&texture.height===PAGE_H?6:1);
+  const rows=rowsOverride??(backTexture?32:texture.pageViewport||texture.width===PAGE_W&&texture.height===PAGE_H?6:1);
   const state=bookState(),widthScale=bookWidthScale();
   const grid=Array.from({length:rows+1},(_,row)=>chain.map(point=>project(point,row/rows,state,widthScale)));
   const silhouette=[...grid[0],...grid[rows].slice().reverse()];
@@ -799,6 +874,7 @@ function mesh(chain,texture,side,extraShade=0,backTexture=null,rowsOverride=null
       const v0=row/rows,v1=(row+1)/rows;
       quad(face,[{x:u0,y:v0*th},{x:u1,y:v0*th},{x:u1,y:v1*th},{x:u0,y:v1*th}],
         [grid[row][i],grid[row][i+1],grid[row+1][i+1],grid[row+1][i]]);
+
     }
   }
   if(extraShade>0) {
@@ -855,43 +931,65 @@ function stacks(chain,side,amount,number=side>0?0:1) {
   ctx.restore();
 }
 
-function castShadow(turning,receiving) {
-  const targetSide=-motion.direction;
-  const receiverSide=Math.sign(receiving.at(-1).x);
-  const fade=receiverSide===targetSide?smooth((motion.progress-.5)/.13):1-smooth(motion.progress/.5);
-  if(fade===0)return;
-  const alphas=[];
-  for(let i=0;i<SEGMENTS;i++) {
-    const a=receiving[i],b=receiving[i+1];
-    // Trace the turning chain in screen space to locate the shadow's footprint.
-    let closest=null;
-    for(let j=0;j<SEGMENTS;j++) {
-      const a0=turning[j],b0=turning[j+1];
-      if(a.x<Math.min(a0.x,b0.x)||a.x>Math.max(a0.x,b0.x))continue;
-      const u=(a.x-a0.x)/(b0.x-a0.x||1e-6);
-      const candidate={x:a.x,z:mix(a0.z,b0.z,u)};
-      if(!closest||candidate.z>closest.z)closest=candidate;
+let paperShadowRenderer=null;
+function castShadow(turning,receiving){
+  if(!paperRenderer().gpu){castShadowFallback(turning,receiving);return;}
+  if(!paperShadowRenderer){try{paperShadowRenderer=new PaperSurfaceRenderer();}catch{paperShadowRenderer={ready:false};}}
+  if(!paperShadowRenderer.ready){castShadowFallback(turning,receiving);return;}
+  const renderer=paperShadowRenderer,sheet=turning[0].sheet,side=Math.sign(receiving.at(-1).x),width=Math.abs(receiving.at(-1).x);
+  const number=motion.direction===1?spread*2:spread*2-1,texture=insertShadowTexture(paperSurface(number));
+  renderer.begin(canvas.width,canvas.height);renderer.gl.disable(renderer.gl.BLEND);
+  renderer.surface(texture,texture,1,64,32,(u,v)=>{
+    const source=sheetSample(sheet,u,v),receiverU=clamp(Math.abs(source.x)/Math.max(1,width)),support=sampleChain(receiving,receiverU);
+    const gap=Math.max(0,source.z-support.z),elevation=pageElevation(gap),x=source.x+elevation*.12,y=source.y+elevation*.16;
+    const p={x,y,z:support.z},out=surfaceVertex(p);
+    out.coverage=Math.sign(x)===side&&gap>0?Math.exp(-gap/110)*smooth(gap/4):0;
+    out.depth-=gap*.001;return out;
+  },{frontFlip:false,backFlip:false});
+  ctx.save();path([...receiving.map(p=>project(p,0)),...receiving.slice().reverse().map(p=>project(p,1))]);ctx.clip();
+  ctx.filter='blur(2px)';renderer.composite(ctx);ctx.restore();
+}
+function castShadowFallback(turning,receiving) {
+  if(!turning[0].sheet)return;
+  const sheet=turning[0].sheet;
+  const rows=Math.abs(sheet.grid[0].at(-1).y)>0.01?6:1;
+  // Separate height-aware footprints for each row follow an oblique curl.
+  // A broad elevated shadow softens; contact tightens without a dark wedge.
+  for(let row=0;row<rows;row++){
+    const v=(row+.5)/rows,values=[],gaps=[];
+    const occluder=turning.map(p=>sheetSample(sheet,p.u,v));
+    for(let i=0;i<=SEGMENTS;i++){
+      const receiver=receiving[i];let gap=Infinity;
+      for(let j=0;j<SEGMENTS;j++){
+        const a=occluder[j],b=occluder[j+1];
+        const ax=a.x+a.z*.10,bx=b.x+b.z*.10;
+        if(receiver.x<Math.min(ax,bx)||receiver.x>Math.max(ax,bx))continue;
+        const t=clamp((receiver.x-ax)/(bx-ax||1e-6)),height=mix(a.z,b.z,t)-receiver.z;
+        if(height>1)gap=Math.min(gap,height);
+      }
+      gaps.push(gap);values.push(Number.isFinite(gap) ? .29*Math.exp(-gap/85)*smooth(gap/6):0);
     }
-    if(!closest){alphas.push(0);continue;}
-    const gap=Math.abs(closest.z-a.z);
-    alphas.push(.38*Math.exp(-gap/95)*fade);
+    const a=project(receiving[0],v),b=project(receiving.at(-1),v),gradient=ctx.createLinearGradient(a.x,a.y,b.x,b.y);
+    values.forEach((alpha,i)=>{
+      const softness=Number.isFinite(gaps[i])?clamp(gaps[i]/100)*.5:.5;
+      const blurred=(values[Math.max(0,i-1)]+alpha*2+values[Math.min(SEGMENTS,i+1)])/4;
+      gradient.addColorStop(i/SEGMENTS,`rgba(55,35,24,${mix(alpha,blurred,softness)})`);
+    });
+    path([...receiving.map(p=>project(p,row/rows)),...receiving.slice().reverse().map(p=>project(p,(row+1)/rows))]);
+    ctx.fillStyle=gradient;ctx.fill();
   }
-  // One gradient over the chain avoids a visible seam at every shadow segment.
-  const gradient=ctx.createLinearGradient(project(receiving[0],0).x,0,project(receiving.at(-1),0).x,0);
-  alphas.forEach((a,i)=>gradient.addColorStop(i/SEGMENTS,`rgba(62,21,35,${a})`));
-  gradient.addColorStop(1,`rgba(62,21,35,${alphas.at(-1)||0})`);
-  path([...receiving.map(p=>project(p,0)),...receiving.slice().reverse().map(p=>project(p,1))]);ctx.fillStyle=gradient;ctx.fill();
 }
 
 function draw() {
   if(!loaded)return;
   updateBookResponse();
   tocHitAreas=[];
-  turningSheetDepth=null;
+  turningSheetDepth=null;paperSurfaceFrame=false;
   ctx.clearRect(0,0,W,H);ctx.imageSmoothingEnabled=false;
   if(motion?.gutterContacts?.length)updateGutterContacts();
   if(coverMotion?.bridge){coverMotion.bridge.draw();return;}
   if(closed3DActive()){drawClosed3D();return;}
+  if(appliedPaletteKey!==JSON.stringify(bookContent.palette))applyBookPalette(false);
   if(spineView&&!spineMotion){drawSpineView();return;}
   ctx.save();ctx.fillStyle='rgba(0,0,0,.45)';
   ctx.shadowColor='rgba(0,0,0,.7)';ctx.shadowBlur=12;
@@ -925,17 +1023,17 @@ function draw() {
   if(rightNumber<pageCount){restingItems(right,rightNumber,1,'under');mesh(right,litViewport(rightNumber,right,1),1);registerTocAreas(rightNumber,right,1);restingItems(right,rightNumber,1,'over');}
   if(motion) {
     const chain=turnChain(motion.direction,p);
+    updateTurnInsertDynamics(chain);
     castShadow(chain,left);castShadow(chain,right);
     const frontNumber=motion.direction===1?spread*2:spread*2-1;
     const backNumber=motion.direction===1?turnDestination()*2-1:turnDestination()*2;
-    if(Math.abs(turningDistance())===1&&(itemsOnPage(frontNumber).length||itemsOnPage(backNumber).length))turningSheetDepth=buildTurningSheetDepth(chain);
-    const shade=.065*Math.sin(Math.PI*p);
+    if(!paperRenderer().ready&&Math.abs(turningDistance())===1&&(itemsOnPage(frontNumber).length||itemsOnPage(backNumber).length))turningSheetDepth=buildTurningSheetDepth(chain);
     turningItems(chain,'under');
-    mesh(chain,litViewport(frontNumber,chain,motion.direction,shade),motion.direction,0,
-      litViewport(backNumber,chain,-motion.direction,shade));
+    mesh(chain,viewport(frontNumber),motion.direction,0,viewport(backNumber));
     // The parchment sprite owns its torn alpha edge. An extra straight
     // outline here fills transparent pixels with a conspicuous pale seam.
     turningItems(chain,'over');
+    if(paperSurfaceFrame){paperRenderer().composite(ctx);paperSurfaceFrame=false;}
   }
   // Cover's lower rim encloses the page stack, but must not cover the inside
   // board's own corner guard. Those guards are already part of the inside-
@@ -966,13 +1064,32 @@ function paintFloatingInserts() {
   // the hand is holding them above the book, even while crossing its spine.
   if(itemDrag) {
     const state=itemState(itemDrag.item);
-    if(state.outside)paintItem(itemDrag.item,state.back,{x:itemDrag.x,y:itemDrag.y},1,state.rotation,false,itemDrag.pageNumber,null,null);
-    else {
-      const side=state.pageNumber%2===0?1:-1;
-      const amount=side<0?spread/(spreadCount()-1):1-spread/(spreadCount()-1);
-      paintPageItem(itemDrag.item,resting(side,amount),side,state.pageNumber);
-    }
+    // Lift the whole card into a stable screen plane during a drag. Its saved
+    // support face is left untouched until release, so crossing the gutter or
+    // another page never remaps its coordinates mid-gesture.
+    paintItem(itemDrag.item,state.back,{x:itemDrag.displayX,y:itemDrag.displayY},itemDrag.displayScale,itemDrag.rotation,false,itemDrag.pageNumber,null,null);
   }
+}
+
+function settleDraggedInsert(dragState) {
+  const state=itemState(dragState.item),number=state.pageNumber;
+  let target;
+  if(state.outside)target={x:state.outsideX,y:state.outsideY,scale:1,rotation:state.rotation};
+  else {
+    const side=number%2===0?1:-1,amount=side<0?spread/(spreadCount()-1):1-spread/(spreadCount()-1),chain=resting(side,amount);
+    const width=128*(dragState.item.type==='feather'?3:1),center=rigidInsertPoint(chain,side,number,state,0,0,width),a=rigidInsertPoint(chain,side,number,state,-width*.45,0,width),b=rigidInsertPoint(chain,side,number,state,width*.45,0,width);
+    target={x:center.x,y:center.y,scale:Math.hypot(b.x-a.x,b.y-a.y)/(width*.9),rotation:Math.atan2(b.y-a.y,b.x-a.x)};
+  }
+  const from={x:dragState.displayX,y:dragState.displayY,scale:dragState.displayScale,rotation:dragState.rotation},start=performance.now(),duration=150;
+  function frame(now){
+    if(itemDrag!==dragState)return;
+    const t=clamp((now-start)/duration),e=sine(t),angle=Math.atan2(Math.sin(target.rotation-from.rotation),Math.cos(target.rotation-from.rotation));
+    dragState.displayX=mix(from.x,target.x,e);dragState.displayY=mix(from.y,target.y,e);dragState.displayScale=mix(from.scale,target.scale,e);dragState.rotation=from.rotation+angle*e;
+    draw();
+    if(t<1)insertLandingRaf=requestAnimationFrame(frame);
+    else{itemDrag=null;insertLandingRaf=0;draw();}
+  }
+  insertLandingRaf=requestAnimationFrame(frame);
 }
 
 function drawSpineOverlay(amount=1) {
@@ -1001,7 +1118,7 @@ function titledSpine(source=assets.spine,name=bookName,palette=bookContent.palet
   const ornamentKey=JSON.stringify(ornaments);
   if(spineTitleCache?.source===source&&spineTitleCache.title===title&&spineTitleCache.ornamentKey===ornamentKey)return spineTitleCache.texture;
   const texture=spriteSurface(260,source.height),p=texture.getContext('2d');
-  p.imageSmoothingEnabled=false;p.drawImage(source,380,0,260,source.height,0,0,260,texture.height);
+  p.imageSmoothingEnabled=false;p.drawImage(source,source.width===260?0:380,0,260,source.height,0,0,260,texture.height);
   const original=spriteSurface(texture.width,texture.height);original.getContext('2d').drawImage(texture,0,0);
   // Retain the two end bands. Rebuild the entire middle as one continuous
   // leather panel, removing the two internal raised bands and old dividers.
@@ -1015,22 +1132,28 @@ function titledSpine(source=assets.spine,name=bookName,palette=bookContent.palet
   p.beginPath();p.moveTo(43,317);p.lineTo(43,1173);p.moveTo(217,317);p.lineTo(217,1173);p.stroke();p.globalAlpha=1;
   // Extract the existing emblem with its dark pixel outline. The surrounding
   // leather remains transparent, so it can be moved to both end panels.
-  const icon=spriteSurface(100,134),ip=icon.getContext('2d');ip.drawImage(original,82,336,100,134,0,0,100,134);
+  let icon;
+  const fallbackIcon=()=>{
+    if(icon)return icon;
+    icon=spriteSurface(100,134);const ip=icon.getContext('2d');ip.drawImage(original,82,336,100,134,0,0,100,134);
   const frame=ip.getImageData(0,0,100,134),mask=materialMasks.get(baseAssets.spine);
   for(let y=0;y<134;y++)for(let x=0;x<100;x++){
     let marked=false;
     for(let dy=-3;dy<=3&&!marked;dy++)for(let dx=-3;dx<=3;dx++){
       const xx=x+dx,yy=y+dy;if(xx<0||xx>=100||yy<0||yy>=134)continue;
-      if(mask[((336+yy)*baseAssets.spine.width+380+82+xx)*2+1]>100){marked=true;break;}
+      if(mask[((336+yy)*baseAssets.spine.width+(baseAssets.spine.width===260?0:380)+82+xx)*2+1]>100){marked=true;break;}
     }
     if(!marked)frame.data[(y*100+x)*4+3]=0;
   }
   ip.putImageData(frame,0,0);
-  if(!drawSpineOrnament(p,ornaments.top,80,84,100,134,palette))p.drawImage(icon,80,84);
-  if(!drawSpineOrnament(p,ornaments.bottom,80,1272,100,134,palette,ornaments.flipBottom)){p.save();p.translate(130,1339);if(ornaments.flipBottom)p.rotate(Math.PI);p.drawImage(icon,-50,-67);p.restore();}
+    return icon;
+  };
+  if(!drawSpineOrnament(p,ornaments.top,80,84,100,134,palette))p.drawImage(fallbackIcon(),80,84);
+  if(!drawSpineOrnament(p,ornaments.bottom,80,1272,100,134,palette,ornaments.flipBottom)){p.save();p.translate(130,1339);if(ornaments.flipBottom)p.rotate(Math.PI);p.drawImage(fallbackIcon(),-50,-67);p.restore();}
   p.save();p.translate(130,745);p.rotate(-Math.PI/2);p.textAlign='center';p.textBaseline='middle';
-  let size=110;
-  do {p.font=`bold ${size}px Georgia`;if(p.measureText(title).width<=800)break;size--;}while(size>18);
+  let lo=18,hi=110;
+  while(lo<hi){const size=Math.ceil((lo+hi)/2);p.font=`bold ${size}px Georgia`;if(p.measureText(title).width<=800)lo=size;else hi=size-1;}
+  p.font=`bold ${lo}px Georgia`;
   p.strokeStyle=coverInk(.24,palette.outside);p.lineWidth=4;p.lineJoin='round';p.fillStyle=palette.metal==='silver'?'#dce6ee':'#f0cd82';
   p.strokeText(title,0,0,800);p.fillText(title,0,0,800);
   p.restore();spineTitleCache={source,title,ornamentKey,texture};return texture;
@@ -1038,7 +1161,7 @@ function titledSpine(source=assets.spine,name=bookName,palette=bookContent.palet
 
 function drawSpineView() {
   // The spine, board, and bevel share one camera and the same hinge vertices.
-  const height=430,width=310,depth=ClosedBooks3D.thickness(pageCount),yaw=.43,pitch=.055,focal=1400;
+  const height=430,width=310,depth=ClosedBooks3D.thickness(physicalPageCount(bookContent)),yaw=.43,pitch=.055,focal=1400;
   const spine=titledSpine(),spineUV=opaqueBounds(spine),boardUV=opaqueBounds(assets.front);
   const camera=(x,y,z)=>{
     const horizontal=x*Math.sin(yaw)+z*Math.cos(yaw),distance=-x*Math.cos(yaw)+z*Math.sin(yaw);
@@ -1090,7 +1213,7 @@ function drawInside(side) {
 function pageThickness() {
   // Paper grows linearly with the leaf count. Board thickness is separate:
   // a pamphlet must not inherit a novel-sized page block or binding radius.
-  return clamp(pageCount/320,.025,2.2);
+  return clamp(physicalPageCount(bookContent)/320,.025,2.2);
 }
 
 function redrawInsideCorner(side) {
@@ -1277,7 +1400,7 @@ function itemPose(item,number) {
   const state=itemState(item),back=!!state.back;
   // Loose cards rest on the exposed face. They are carried by the turning
   // surface, not tucked underneath it or offset after landing.
-  return {u:clamp(state.u,.08,.94),v:state.v,rotation:state.rotation,back,under:false};
+  return {u:clamp(state.u,-.35,1.35),v:state.v,rotation:state.rotation,back,under:false};
 }
 
 function itemTexture(item,back) {
@@ -1343,7 +1466,7 @@ function mountedTexture(item,back=false,tapedOverride=null) {
 
 function sampleChain(chain,u) {
   const f=clamp(u)*SEGMENTS,i=Math.min(SEGMENTS-1,Math.floor(f)),t=f-i;
-  return {x:mix(chain[i].x,chain[i+1].x,t),z:mix(chain[i].z,chain[i+1].z,t),u,manualTurn:chain[i].manualTurn};
+  return {x:mix(chain[i].x,chain[i+1].x,t),z:mix(chain[i].z,chain[i+1].z,t),u,sheet:chain[i].sheet};
 }
 
 function paintItem(item,back,position,scale=1,rotation=-.08,hit=false,pageNumber=null,underY=null,side=null) {
@@ -1368,7 +1491,7 @@ function sampleItemChain(chain,u) {
   if(u>=0&&u<=1)return sampleChain(chain,u);
   const a=u<0?chain[0]:chain[SEGMENTS-1],b=u<0?chain[1]:chain[SEGMENTS];
   const t=(u-a.u)/(b.u-a.u);
-  return {x:mix(a.x,b.x,t),z:mix(a.z,b.z,t),u};
+  return {x:mix(a.x,b.x,t),z:mix(a.z,b.z,t),u,sheet:a.sheet};
 }
 
 function insertSurfacePoint(chain,side,number,u,v) {
@@ -1378,8 +1501,131 @@ function insertSurfacePoint(chain,side,number,u,v) {
   }
   return project(sampleItemChain(chain,u),v);
 }
+const insertEdgeProfiles=new WeakMap();
+function insertEdgeProfile(texture){
+  if(insertEdgeProfiles.has(texture))return insertEdgeProfiles.get(texture);
+  const width=texture.width,height=texture.height,pixels=texture.getContext('2d').getImageData(0,0,width,height).data;
+  const top=[],bottom=[],left=[],right=[];
+  for(let x=0;x<width;x++){let a=0,b=height-1;while(a<height&&pixels[(a*width+x)*4+3]<100)a++;while(b>=0&&pixels[(b*width+x)*4+3]<100)b--;top.push(a<height?a:-1);bottom.push(b);}
+  for(let y=0;y<height;y++){let a=0,b=width-1;while(a<width&&pixels[(y*width+a)*4+3]<100)a++;while(b>=0&&pixels[(y*width+b)*4+3]<100)b--;left.push(a<width?a:-1);right.push(b);}
+  const profile={width,height,top,bottom,left,right};insertEdgeProfiles.set(texture,profile);return profile;
+}
+const insertShadowTextures=new WeakMap();
+function insertShadowTexture(texture){
+  if(insertShadowTextures.has(texture))return insertShadowTextures.get(texture);
+  const c=spriteSurface(texture.width,texture.height),p=c.getContext('2d');
+  p.drawImage(texture,0,0);p.globalCompositeOperation='source-in';p.fillStyle='rgba(38,26,16,.23)';p.fillRect(0,0,c.width,c.height);
+  insertShadowTextures.set(texture,c);return c;
+}
+const vectorUnit=v=>{const n=Math.hypot(v.x,v.y,v.z)||1;return{x:v.x/n,y:v.y/n,z:v.z/n};};
+const vectorDot=(a,b)=>a.x*b.x+a.y*b.y+a.z*b.z;
+const vectorSub=(a,b)=>({x:a.x-b.x,y:a.y-b.y,z:a.z-b.z});
+const vectorCross=(a,b)=>({x:a.y*b.z-a.z*b.y,y:a.z*b.x-a.x*b.z,z:a.x*b.y-a.y*b.x});
+function updateTurnInsertDynamics(chain){
+  if(!motion)return;
+  if(!motion.insertDynamics)motion.insertDynamics=new Map();
+  const source=motion.direction===1?spread*2:spread*2-1,p=motion.progress;
+  for(const item of itemsOnPage(source)){
+    const state=itemState(item);if(state.taped||state.edgeMark||state.outside)continue;
+    let d=motion.insertDynamics.get(item.sheet);
+    if(!d){d={u:0,v:0,rotation:0,vu:0,vv:0,angular:0,progress:0};motion.insertDynamics.set(item.sheet,d);}
+    const elapsed=Math.abs(p-d.progress)*Number($('#speed').value)/1000;
+    if(elapsed<.0001)continue;
+    const steps=Math.max(1,Math.ceil(elapsed/.016)),dt=Math.min(.032,elapsed/steps),sheet=chain[0].sheet;
+    for(let i=0;i<steps;i++){
+      const u=state.u+d.u,v=state.v+d.v,a=sheetSample(sheet,u-.003,v),b=sheetSample(sheet,u+.003,v),top=sheetSample(sheet,u,v-.003),bottom=sheetSample(sheet,u,v+.003);
+      const tx=vectorUnit(vectorSub(b,a)),ty=vectorUnit(vectorSub(bottom,top));
+      const friction=.68,force=t=>Math.abs(t)>friction?-Math.sign(t)*(Math.abs(t)-friction):0;
+      // Static friction holds small motions. Only steep support or a quick
+      // reversal produces a limited slip, with separate angular inertia.
+      d.vu=(d.vu+force(tx.z)*1.3*dt)*Math.exp(-10*dt);
+      d.vv=(d.vv+force(ty.z)*.8*dt)*Math.exp(-10*dt);
+      d.u=clamp(d.u+d.vu*dt,-.035,.035);d.v=clamp(d.v+d.vv*dt,-.025,.025);
+      const target=-sheet.tilt*.12*envelopeForInsert(p);
+      d.angular+=(target-d.rotation)*36*dt;d.angular*=Math.exp(-10*dt);d.rotation=clamp(d.rotation+d.angular*dt,-.055,.055);
+    }
+    d.progress=p;
+  }
+}
+const envelopeForInsert=p=>Math.sin(Math.PI*clamp(p));
+function turnInsertPose(item,pose){
+  const dynamics=motion?.insertDynamics?.get(item.sheet);if(!dynamics)return pose;
+  const returnWeight=motion?.settlingCommit===false?(motion.grab?.release??1):1;
+  return {...pose,u:pose.u+dynamics.u*returnWeight,v:pose.v+dynamics.v*returnWeight,rotation:pose.rotation+dynamics.rotation*returnWeight};
+}
+function insertSupportSheet(chain){
+  if(chain[0].sheet)return chain[0].sheet;
+  if(!chain.insertSupport)chain.insertSupport={progress:0,evaluate:(u,v)=>{const p=sampleItemChain(chain,u);return{x:p.x,y:v*TURN_HEIGHT,z:p.z};}};
+  return chain.insertSupport;
+}
+function insertFrame(chain,pose,side,width,height,item=null){
+  const sheet=insertSupportSheet(chain),key=[item?.sheet,pose.u,pose.v,pose.rotation,side,width,height].join(':');
+  if(!sheet.cards)sheet.cards=new Map();if(sheet.cards.has(key))return sheet.cards.get(key);
+  const anchor=sheetSample(sheet,pose.u,pose.v),span=width/(2*PAGE_W);
+  const factor=mix(1,.45,Math.sin(Math.PI*(sheet.progress||0)));
+  const a=sheetSample(sheet,pose.u-span*factor,pose.v),b=sheetSample(sheet,pose.u+span*factor,pose.v);
+  let x=vectorUnit(vectorSub(b,a));for(const k of ['x','y','z'])x[k]*=side;
+  const top=sheetSample(sheet,pose.u,pose.v-.02),bottom=sheetSample(sheet,pose.u,pose.v+.02);
+  let y=vectorSub(bottom,top),dot=vectorDot(x,y);for(const k of ['x','y','z'])y[k]-=dot*x[k];y=vectorUnit(y);
+  const normal=vectorUnit(vectorCross(x,y)),cs=Math.cos(pose.rotation||0),sn=Math.sin(pose.rotation||0);
+  const local=(rx,ry)=>({x:anchor.x+x.x*rx+y.x*ry*TURN_HEIGHT/PAGE_H,y:anchor.y+x.y*rx+y.y*ry*TURN_HEIGHT/PAGE_H,z:anchor.z+x.z*rx+y.z*ry*TURN_HEIGHT/PAGE_H});
+  let clearance=.8;
+  // A stiff insert bridges curvature. Fit its supporting plane above the
+  // local contact patch rather than bending it into the page or clipping it.
+  for(const tx of [-.42,0,.42])for(const ty of [-.42,0,.42]){
+    const rx=tx*width*cs-ty*height*sn,ry=tx*width*sn+ty*height*cs;
+    const u=pose.u+side*rx/PAGE_W,v=pose.v+ry/PAGE_H;
+    if(u<0||u>1||v<0||v>1)continue;
+    const support=sheetSample(sheet,u,v),plane=local(rx,ry);
+    clearance=Math.max(clearance,vectorDot(vectorSub(support,plane),normal)+.8);
+  }
+  clearance=Math.min(clearance,46);
+  const frame={anchor,x,y,normal,clearance,local,pose,side};sheet.cards.set(key,frame);return frame;
+}
+function rigidSheetInsertWorld(chain,pose,side,rx,ry,width,height=width*.79,item=null){
+  const frame=insertFrame(chain,pose,side,width,height,item),p=frame.local(rx,ry);
+  for(const k of ['x','y','z'])p[k]+=frame.normal[k]*frame.clearance;
+  return p;
+}
+function rigidSheetInsertPoint(chain,pose,side,rx,ry,width){return projectSheetPoint(rigidSheetInsertWorld(chain,pose,side,rx,ry,width));}
+function paintTurningInsert(item,chain,side,number,pose,width,height){
+  const state=itemState(item),renderer=paperRenderer();pose=turnInsertPose(item,pose);
+  const front=mountedTexture(item,pose.back),back=mountedTexture(item,!pose.back,false),frame=insertFrame(chain,pose,side,width,height,item);
+  const cs=Math.cos(pose.rotation||0),sn=Math.sin(pose.rotation||0);
+  const locate=(u,v)=>{
+    const x=(u-.5)*width,y=(v-.5)*height,rx=x*cs-y*sn,ry=x*sn+y*cs;
+    let p=rigidSheetInsertWorld(chain,pose,side,rx,ry,width,height,item);
+    if(state.taped||item.type==='feather'){
+      const support=sheetSample(chain[0].sheet,pose.u+side*rx/PAGE_W,pose.v+ry/PAGE_H),flex=state.taped?.10:.24;
+      for(const k of ['x','y','z'])p[k]=mix(p[k],support[k]+frame.normal[k]*.9,flex);
+    }
+    return p;
+  };
+  const shadow=insertShadowTexture(front);
+  renderer.surface(shadow,shadow,1,12,8,(u,v)=>{
+    const x=(u-.5)*width+frame.clearance*.10,y=(v-.5)*height+frame.clearance*.12;
+    const rx=x*cs-y*sn,ry=x*sn+y*cs,pu=pose.u+side*rx/PAGE_W,pv=pose.v+ry/PAGE_H;
+    const p=sheetSample(chain[0].sheet,pu,pv);for(const k of ['x','y','z'])p[k]+=frame.normal[k]*.35;
+    return {...surfaceVertex(p),coverage:pu>=0&&pu<=1&&pv>=0&&pv<=1?1:0};
+  },{frontFlip:false,backFlip:true,opacity:Math.exp(-frame.clearance/65)});
+  renderer.surface(front,back,1,12,8,(u,v)=>{const p=surfaceVertex(locate(u,v));p.light=.92+.08*Math.abs(frame.normal.z);return p;},{frontFlip:false,backFlip:true});
+  // Follow the paper's alpha contour, not the transparent mounting rectangle.
+  if(item.type!=='feather'){
+    const profile=insertEdgeProfile(itemTexture(item,false));
+    if(!paintTurningInsert.edge){const c=spriteSurface(1,1),p=c.getContext('2d');p.fillStyle='#b18450';p.fillRect(0,0,1,1);paintTurningInsert.edge=c;}
+    const edge=paintTurningInsert.edge;
+    for(const boundary of ['top','bottom','left','right'])renderer.surface(edge,edge,1,64,1,(t,v)=>{
+      const horizontal=boundary==='top'||boundary==='bottom',limit=horizontal?profile.width:profile.height,index=Math.round(t*(limit-1)),value=profile[boundary][index];
+      const x=horizontal?index:value,y=horizontal?value:index;
+      const p=locate((14+x)/front.width,(14+y)/front.height);
+      for(const k of ['x','y','z'])p[k]+=frame.normal[k]*(v-.5)*.55;
+      return {...surfaceVertex(p),coverage:value<0?0:1};
+    },{frontFlip:false,backFlip:false,shade:.88});
+  }
+}
 function rigidInsertPoint(chain,side,number,pose,rx,ry,width) {
   const v=pose.v+ry/PAGE_H;
+  if(number>=0&&number<pageCount)return rigidSheetInsertPoint(chain,pose,side,rx,ry,width);
   if(number===-1||number===pageCount)return insertSurfacePoint(chain,side,number,pose.u+side*rx/PAGE_W,v);
   const anchor=sampleItemChain(chain,pose.u),span=width/(2*PAGE_W);
   const a=sampleItemChain(chain,pose.u-span),b=sampleItemChain(chain,pose.u+span),length=Math.hypot(b.x-a.x,b.z-a.z)||1;
@@ -1390,9 +1636,10 @@ function paintPageItem(item,chain,side,number,{faceOnly=false,hit=false,occlude=
   const pose=itemPose(item,number),itemSize=item.type==='feather'?3:1,
     width=128*208/180*itemSize,height=96*164/136*itemSize;
   const state=itemState(item);
+  if(paperSurfaceFrame&&chain[0].sheet){paintTurningInsert(item,chain,side,number,pose,width,height);return;}
   if(state.edgeMark&&side!==(state.edgeMark.page%2===0?1:-1)){pose.back=!pose.back;pose.rotation=-pose.rotation;}
   const front=mountedTexture(item,pose.back,state.edgeMark&&pose.back?false:null),reverse=faceOnly?null:mountedTexture(item,!pose.back,state.edgeMark&&!pose.back?false:null);
-  const cs=Math.cos(pose.rotation),sn=Math.sin(pose.rotation);
+  const cs=Math.cos(pose.rotation||0),sn=Math.sin(pose.rotation||0);
   // A loose photograph is a stiff card, not another piece of the flexible
   // leaf. One tangent plane prevents its front/back strips folding through
   // each other and cancelling to nothing at the curl's inflection.
@@ -1414,9 +1661,13 @@ function paintPageItem(item,chain,side,number,{faceOnly=false,hit=false,occlude=
   const locate=(x,y)=>{
     const rx=x*cs-y*sn,ry=x*sn+y*cs;
     const u=pose.u+side*rx/PAGE_W,v=pose.v+ry/PAGE_H;
-    if(rigid)return project({x:anchor.x+side*rx*tangent.x,z:anchor.z+side*rx*tangent.z},v);
+    if(rigid)return rigidSheetInsertPoint(chain,pose,side,rx,ry,width);
     return insertSurfacePoint(chain,side,number,u,v);
   };
+  if(!masked){
+    const shadow=insertShadowTexture(front),points=[[-width/2,-height/2],[width/2,-height/2],[width/2,height/2],[-width/2,height/2]].map(([x,y])=>{const p=locate(x,y);return{x:p.x+1.2,y:p.y+1.8};});
+    quad(shadow,[{x:0,y:0},{x:shadow.width,y:0},{x:shadow.width,y:shadow.height},{x:0,y:shadow.height}],points,target);
+  }
   for(let i=0;i<12;i++)for(let row=0;row<4;row++) {
     const x0=(i/12-.5)*width,x1=((i+1)/12-.5)*width;
     const y0=(row/4-.5)*height,y1=((row+1)/4-.5)*height;
@@ -1465,6 +1716,7 @@ function paintPageItem(item,chain,side,number,{faceOnly=false,hit=false,occlude=
     const polygon=[[-width/2,-height/2],[width/2,-height/2],[width/2,height/2],[-width/2,height/2]].map(([x,y])=>locate(x,y));
     const xs=polygon.map(p=>p.x),ys=polygon.map(p=>p.y),{x,y}=locate(0,0);
     itemHits.push({item,back:pose.back,pageNumber:number,underY:null,side,x,y,w:Math.max(...xs)-Math.min(...xs),h:Math.max(...ys)-Math.min(...ys),polygon,hitTriangles,bookmark:!!state.edgeMark});
+    if(hoveredInsert===item&&!motion){ctx.save();ctx.strokeStyle='rgba(241,210,139,.65)';ctx.lineWidth=1;path(polygon);ctx.stroke();ctx.restore();}
   }
 }
 
@@ -1609,7 +1861,7 @@ function prepareGutterContacts() {
     const texture=mountedTexture(item,state.back),b=opaqueBounds(texture),size=item.type==='feather'?3:1;
     const w=128*208/180*size*(b.right-b.left)/texture.width,h=96*164/136*size*(b.bottom-b.top)/texture.height;
     const half=(w*Math.abs(Math.cos(state.rotation))+h*Math.abs(Math.sin(state.rotation)))/2;
-    const hinge=CX+bookState().shift*pagePerspective(state.v||.5).hinge;
+    const hinge=pageBindingAnchor(state.v??.5).x;
     if(center.y<TOP-25||center.y>BOTTOM+15||center.x-half>=hinge-3||center.x+half<=hinge+3)continue;
     const support=resting(-direction,-direction<0?spread/(spreadCount()-1):1-spread/(spreadCount()-1));
     let u=0,v=state.v||.5;
@@ -1661,10 +1913,17 @@ function refreshKeepsakes() {
 
 function inspectionOrigin(item){
   const hit=itemHits.find(h=>h.item===item),state=itemState(item),r=canvas.getBoundingClientRect();
-  if(hit)return{x:r.left+hit.x/W*r.width,y:r.top+hit.y/H*r.height,w:hit.w/W*r.width,h:hit.h/H*r.height,rotation:state.rotation||0};
-  const side=Number.isInteger(state.pageNumber)&&state.pageNumber%2?-1:1;
-  const q=state.outside?{x:state.outsideX,y:state.outsideY}:insertSurfacePoint(resting(side,side<0?spread/(spreadCount()-1):1-spread/(spreadCount()-1)),side,state.pageNumber,state.u,state.v);
-  return{x:r.left+q.x/W*r.width,y:r.top+q.y/H*r.height,w:128/W*r.width,h:96/H*r.height,rotation:state.rotation||0};
+  let polygon=hit?.polygon;
+  if(!polygon){
+    const number=state.taped?state.anchorPage:state.pageNumber,side=Number.isInteger(number)&&number%2?-1:1;
+    const size=item.type==='feather'?3:1,width=128*208/180*size,height=96*164/136*size,cs=Math.cos(state.rotation),sn=Math.sin(state.rotation);
+    if(state.outside)polygon=[[-width/2,-height/2],[width/2,-height/2],[width/2,height/2],[-width/2,height/2]].map(([x,y])=>({x:state.outsideX+x*cs-y*sn,y:state.outsideY+x*sn+y*cs}));
+    else{const chain=resting(side,side<0?spread/(spreadCount()-1):1-spread/(spreadCount()-1)),pose=itemPose(item,number);
+      polygon=[[-width/2,-height/2],[width/2,-height/2],[width/2,height/2],[-width/2,height/2]].map(([x,y])=>rigidInsertPoint(chain,side,number,pose,x*cs-y*sn,x*sn+y*cs,width));}
+  }
+  const quad=polygon.map(p=>({x:r.left+p.x/W*r.width,y:r.top+p.y/H*r.height}));
+  const x=quad.reduce((n,p)=>n+p.x/4,0),y=quad.reduce((n,p)=>n+p.y/4,0);
+  return{x,y,w:Math.hypot(quad[1].x-quad[0].x,quad[1].y-quad[0].y),h:Math.hypot(quad[3].x-quad[0].x,quad[3].y-quad[0].y),rotation:state.rotation||0,quad};
 }
 function positionInspection(){
   if(!inspection)return;
@@ -1674,21 +1933,29 @@ function positionInspection(){
   focus.style.top=cy+'px';focus.style.left=clamp(r.left+r.width/2,half+14,innerWidth-half-14)+'px';
 }
 function inspectionTransform(){
-  const r=$('#item-art').getBoundingClientRect(),o=inspection.origin;
-  return `translate(${o.x-(r.left+r.width/2)}px,${o.y-(r.top+r.height/2)}px) rotate(${o.rotation}rad) scale(${Math.max(.05,o.w/(r.width*312/360))},${Math.max(.05,o.h/(r.height*246/280))})`;
+  const r=$('#item-art').getBoundingClientRect(),o=inspection.origin,q=o.quad;
+  const width=r.width*312/360,height=r.height*246/280;
+  return `matrix(${(q[1].x-q[0].x)/width},${(q[1].y-q[0].y)/width},${(q[3].x-q[0].x)/height},${(q[3].y-q[0].y)/height},${o.x-r.left-r.width/2},${o.y-r.top-r.height/2})`;
 }
-function renderInspection(scale=1,back=inspection.back) {
+function renderInspection(scale=1,back=inspection.back,angle=null) {
   const taped=itemState(inspection.item).taped;
   const c=$('#item-art'),p=c.getContext('2d');p.clearRect(0,0,c.width,c.height);
-  p.imageSmoothingEnabled=false;p.save();p.translate(c.width/2,c.height/2);p.scale(scale,1);
-  p.drawImage(mountedTexture(inspection.item,back),-156,-123,312,246);p.restore();
+  p.imageSmoothingEnabled=false;p.save();p.translate(c.width/2,c.height/2);
+  const texture=mountedTexture(inspection.item,back);
+  if(angle===null){p.scale(scale,1);p.drawImage(texture,-156,-123,312,246);}
+  else{
+    const cosine=Math.cos(angle),sin=Math.sin(angle),corners=[[-156,-123],[156,-123],[156,123],[-156,123]].map(([x,y])=>{const perspective=700/(700+x*sin);return{x:x*cosine*perspective,y:y*perspective-7*Math.sin(angle)};});
+    const left=cosine<0?texture.width:0,right=cosine<0?0:texture.width;
+    quad(texture,[{x:left,y:0},{x:right,y:0},{x:right,y:texture.height},{x:left,y:texture.height}],corners,p);
+    if(Math.abs(cosine)<.04){p.strokeStyle='#b88c56';p.lineWidth=1.1;p.beginPath();p.moveTo(corners[0].x,corners[0].y);p.lineTo(corners[3].x,corners[3].y);p.stroke();}
+  }p.restore();
   $('#item-description').textContent=back?inspection.item.back:inspection.item.front;
   $('#flip-item').textContent='Flip ↻';$('#flip-item').hidden=false;
   $('#flip-item').disabled=inspection.animating||inspection.closing||taped;
   $('#tape-item').textContent=taped?'Remove tape':'Tape down';
   $('#tape-item').setAttribute('aria-pressed',String(taped));
   $('#tape-item').disabled=inspection.animating||inspection.closing;
-  $('#mount-status').textContent=taped?'Taped · remove tape to flip.':'Click outside or press Esc to put back.';
+  $('#mount-status').textContent=taped?'Taped to page · remove tape to move or flip.':'Loose insert · drag on the book to move. Esc puts it back.';
 }
 function paintInspectionShadow(){
   if(!inspection)return;
@@ -1705,8 +1972,8 @@ function paintInspectionShadow(){
   ctx.fillStyle=gradient;ctx.fillRect(-180,-180,360,360);ctx.restore();
 }
 function animateInspectionLift(from,to,duration){
-  const entry=inspection,start=performance.now();
-  function frame(now){if(inspection!==entry)return;const p=clamp((now-start)/duration);entry.lift=mix(from,to,sine(p));draw();if(p<1)requestAnimationFrame(frame);}
+  const entry=inspection,start=performance.now(),token=(inspection.liftToken||0)+1;entry.liftToken=token;
+  function frame(now){if(inspection!==entry||entry.liftToken!==token)return;const p=clamp((now-start)/duration);entry.lift=mix(from,to,sine(p));draw();if(p<1)requestAnimationFrame(frame);}
   requestAnimationFrame(frame);
 }
 function openItem(item,back,pageNumber=null) {
@@ -1721,10 +1988,13 @@ function openItem(item,back,pageNumber=null) {
   animateInspectionLift(0,1,duration);$('#close-item').focus({preventScroll:true});draw();
 }
 function closeInspection(){
-  if(!inspection||inspection.closing||inspection.animating)return;
-  inspection.closing=true;renderInspection();const entry=inspection,duration=matchMedia('(prefers-reduced-motion: reduce)').matches?1:300;
+  if(!inspection||inspection.closing)return;
+  if(inspection.animating){inspection.closeRequested=true;return;}
+  inspection.origin=inspectionOrigin(inspection.item);inspection.closing=true;renderInspection();const entry=inspection,duration=matchMedia('(prefers-reduced-motion: reduce)').matches?1:300;
   $('#inspect').classList.add('putting-back');
-  const animation=$('#item-art').animate([{transform:'none',filter:'drop-shadow(12px 22px 15px #0005)'},{transform:inspectionTransform(),filter:'drop-shadow(0 2px 2px #0003)'}],{duration,easing:'cubic-bezier(.4,0,.7,1)',fill:'forwards'});
+  const current=getComputedStyle($('#item-art')),fromTransform=current.transform,fromFilter=current.filter;
+  for(const animation of $('#item-art').getAnimations())animation.cancel();
+  const animation=$('#item-art').animate([{transform:fromTransform,filter:fromFilter},{transform:inspectionTransform(),filter:'drop-shadow(0 2px 2px #0003)'}],{duration,easing:'cubic-bezier(.4,0,.7,1)',fill:'forwards'});
   animateInspectionLift(entry.lift,0,duration);
   animation.finished.then(()=>{if(inspection!==entry)return;$('#inspect').close();animation.cancel();});
 }
@@ -1734,8 +2004,8 @@ $('#flip-item').onclick=()=>{
   const frame=now=>{
     if(inspection!==entry)return;
     const p=clamp((now-start)/duration),back=p<.5?old:!old;
-    renderInspection(Math.max(.006,Math.abs(Math.cos(Math.PI*sine(p)))),back);
-    if(p<1)requestAnimationFrame(frame);else{inspection.back=!old;itemState(inspection.item).back=inspection.back;inspection.animating=false;persistInsertMounts();renderInspection();}
+    renderInspection(1,back,Math.PI*sine(p));
+    if(p<1)requestAnimationFrame(frame);else{inspection.back=!old;itemState(inspection.item).back=inspection.back;inspection.animating=false;persistInsertMounts();renderInspection();if(inspection.closeRequested)closeInspection();}
   };requestAnimationFrame(frame);
 };
 $('#tape-item').onclick=()=>{
@@ -1843,19 +2113,22 @@ function saveBook(copy=false){
   // previous named spine and make the renamed save its own book entry.
   if(book&&book.name!==bookName)book=null;
   if(!book){book={id:crypto.randomUUID(),name:bookName,pageCount,pages:{},covers:{}};savedBooks.push(book);activeBookId=book.id;localStorage.setItem('keepers-book-active',activeBookId);}
-  book.insertMounts=structuredClone(bookContent.insertMounts||[]);book.pageFormat=structuredClone(bookContent.pageFormat);book.spineOrnaments=structuredClone(effectiveSpineOrnaments(bookContent));book.bookFont=selectedBookFont();book.edition=bookContent.edition;book.sourcePageCount=bookContent.sourcePageCount;book.starterId=bookContent.starterId;book.name=bookName;book.pageCount=pageCount;book.pages=structuredClone(bookContent.pages);book.covers=structuredClone(bookContent.covers);book.palette={...bookContent.palette};book.edgeBookmarks=structuredClone(bookContent.edgeBookmarks||[]);book.savedAt=Date.now();
+  book.readingLayoutKey=bookContent.readingLayoutKey;book.originalState=structuredClone(bookContent.originalState);book.readingSource=structuredClone(bookContent.readingSource);book.readableState=structuredClone(bookContent.readableState);book.paginationChoice=bookContent.paginationChoice;book.insertMounts=structuredClone(bookContent.insertMounts||[]);book.pageFormat=structuredClone(bookContent.pageFormat);book.spineOrnaments=structuredClone(effectiveSpineOrnaments(bookContent));book.bookFont=selectedBookFont();book.edition=bookContent.edition;book.sourcePageCount=bookContent.sourcePageCount;book.starterId=bookContent.starterId;book.name=bookName;book.pageCount=pageCount;book.pages=structuredClone(bookContent.pages);book.covers=structuredClone(bookContent.covers);book.palette={...bookContent.palette};book.edgeBookmarks=structuredClone(bookContent.edgeBookmarks||[]);book.savedAt=Date.now();
   localStorage.setItem('keepers-book-shelf-v1',JSON.stringify(savedBooks));persistBookContent();$('#status').textContent='Saved to your shelf.';renderShelf();
 }
 function openSavedBook(id,quiet=false){
   chapterJourney=null;
   const book=savedBooks.find(entry=>entry.id===id);if(!book)return;
+  prepareReadingBook(book);localStorage.setItem('keepers-book-shelf-v1',JSON.stringify(savedBooks));
+  bookContent.readingLayoutKey=book.readingLayoutKey;bookContent.originalState=structuredClone(book.originalState);bookContent.readingSource=structuredClone(book.readingSource);bookContent.readableState=structuredClone(book.readableState);bookContent.paginationChoice=book.paginationChoice;
   bookTableMode=false;bookShelfMode=false;
   bookName=book.name;bookContent.pageFormat=structuredClone(book.pageFormat);bookContent.spineOrnaments=structuredClone(effectiveSpineOrnaments(book));bookContent.bookFont=book.bookFont||DEFAULT_BOOK_FONT;bookContent.edition=book.edition;bookContent.sourcePageCount=book.sourcePageCount;bookContent.starterId=book.starterId||null;bookContent.name=book.name;bookContent.pageCount=book.pageCount;pageCount=book.pageCount;setBookResolution();syncBookFontControls();
+  const font=bookFonts.get(selectedBookFont());if(font&&font.face.status!=='loaded')font.face.load().then(()=>{if(selectedBookFont()===font.id){bookBodySizes.clear();measuredWordWidths.clear();textures.clear();shadedTextures.clear();draw();}});
   bookContent.pages=structuredClone(book.pages||{});bookContent.covers={front:{},back:{},...(book.covers||{})};bookContent.palette={outside:'#9b382d',inside:'#c85e68',metal:'gold',...(book.palette||{})};activeBookId=id;localStorage.setItem('keepers-book-active',id);
   $('#book-name').value=bookName;$('#outside-color').value=bookContent.palette.outside;$('#inside-color').value=bookContent.palette.inside;$('#metal-color').value=bookContent.palette.metal;
   bookContent.insertMounts=structuredClone(book.insertMounts||[]);bookContent.edgeBookmarks=structuredClone(book.edgeBookmarks||[]);resetSessionInserts();restoreEdgeBookmarks();
   syncActivePageFormat();
-  applyBookPalette(false);spread=0;closedEdge=null;motion=null;queuedTurns=[];bookReturnScene=null;textures.clear();shadedTextures.clear();if(!quiet){updateControls();draw();}$('#shelf').close();persistBookContent();
+  applyBookPalette(false);spread=0;closedEdge=null;motion=null;queuedTurns=[];bookReturnScene=null;restoreReadingPosition();textures.clear();shadedTextures.clear();if(!quiet){updateControls();draw();}$('#shelf').close();persistBookContent();
 }
 $('#save-book').onclick=()=>saveBook(false);$('#save-copy').onclick=()=>saveBook(true);
 $('#book-name').oninput=()=>{bookName=$('#book-name').value;persistBookContent();draw();};
@@ -1972,6 +2245,8 @@ function finish(commit) {
       const state=itemState(item);
       if(state.taped||state.outside||state.edgeMark)continue;
       if(state.pageNumber===source&&!motion.gutterContacts?.some(contact=>contact.item===item)) {
+        const dynamics=motion.insertDynamics?.get(item.sheet);
+        if(dynamics){state.u+=dynamics.u;state.v+=dynamics.v;state.rotation+=dynamics.rotation;}
         state.pageNumber=destination;state.back=!state.back;
         // Deposit onto the face that was opposite before this turn, not
         // onto the reverse of the moving leaf. The landed leaf can cover it;
@@ -1982,7 +2257,7 @@ function finish(commit) {
     }
     spread=landed;
   }
-  motion=null;raf=0;updateControls();draw();
+  motion=null;raf=0;if(commit)persistInsertMounts();updateControls();draw();
   if(chapterJourney){if(commit)advanceChapterJourney();else chapterJourney=null;return;}
   if(queuedTurns.length) {
     const next=queuedTurns.shift();
@@ -2000,10 +2275,22 @@ function finish(commit) {
 }
 
 function settle(commit=true,overrideDuration=null) {
+  motion.settlingCommit=commit;
   // Prepare new page textures before the animation clock starts.
   for(const number of [spread*2-1,spread*2,turnDestination()*2-1,turnDestination()*2])if(number>=0&&number<pageCount)viewport(number);
   const start=motion.progress,target=commit?1:0;
-  const duration=(overrideDuration??Number($('#speed').value))*Math.abs(target-start);let time=null;
+  const releaseHand=motion.grab?.hand?{...motion.grab.hand}:null;
+  let landingHand=null;
+  if(releaseHand){const grab=motion.grab;grab.hand=null;motion.progress=target;landingHand=project(sampleChain(turnChain(motion.direction,target),grab.u),grab.v);motion.progress=start;grab.hand=releaseHand;}
+  let remaining=Math.abs(target-start);
+  if(motion.grab&&overrideDuration===null){
+    const grab=motion.grab,held=project(sampleChain(turnChain(motion.direction,start),grab.u),grab.v);
+    let landed=landingHand;
+    if(!landed){motion.progress=target;landed=project(sampleChain(turnChain(motion.direction,target),grab.u),grab.v);motion.progress=start;}
+    remaining=clamp(Math.hypot(held.x-landed.x,held.y-landed.y)/(2*PAGE_W*bookWidthScale()),.16,1);
+  }
+  const releasePace=motion.grab?1.4:1;
+  const duration=Math.max(120,(overrideDuration??Number($('#speed').value))*remaining*releasePace);let time=null;
   if(!motion.soundPlayed&&commit){motion.soundPlayed=true;playPaperSound(!!chapterJourney);}
   const frame=now=>{
     if(!motion)return;
@@ -2014,7 +2301,11 @@ function settle(commit=true,overrideDuration=null) {
     // into seconds. Missed frames advance the pose, not the duration.
     const t=clamp((now-time)/Math.max(1,duration));
     if(motion.grab)motion.grab.release=1-smooth(t);
-    motion.progress=mix(start,target,t);draw();
+    // A short acceleration, a weighted sweep, then a soft contact interval.
+    const travel=t*t*(3-2*t);
+    motion.progress=mix(start,target,travel);
+    if(releaseHand)motion.grab.hand={x:mix(releaseHand.x,landingHand.x,travel),y:mix(releaseHand.y,landingHand.y,travel)};
+    draw();
     if(t<1)raf=requestAnimationFrame(frame);else finish(commit);
   };
   raf=requestAnimationFrame(frame);
@@ -2128,16 +2419,17 @@ function placeLooseItem(item,point,grab=null) {
   const amount=page.side<0?spread/(spreadCount()-1):1-spread/(spreadCount()-1),chain=resting(page.side,amount);
   let u=state.u??.5,v=state.v??.5;
   const width=128*208/180*(item.type==='feather'?3:1),target=grab?grab.pointer:point;
-  const locate=(u,v)=>grab?rigidInsertPoint(chain,page.side,page.number,{u,v},grab.rx,grab.ry,width):insertSurfacePoint(chain,page.side,page.number,u,v);
+  const locate=(u,v)=>grab?rigidInsertPoint(chain,page.side,page.number,{u,v,rotation:state.rotation},grab.rx,grab.ry,width):insertSurfacePoint(chain,page.side,page.number,u,v);
   // Invert the same curved/perspective surface used for drawing. Screen-space
   // division by page width makes a released card jump, especially near the top.
   for(let i=0;i<10;i++) {
     const p=locate(u,v),a=locate(u+.001,v),b=locate(u,v+.001);
     const ax=(a.x-p.x)/.001,ay=(a.y-p.y)/.001,bx=(b.x-p.x)/.001,by=(b.y-p.y)/.001;
-    const det=ax*by-ay*bx;if(Math.abs(det)<.001)break;
+    const det=ax*by-ay*bx;if(!Number.isFinite(det)||Math.abs(det)<.001)break;
     const dx=target.x-p.x,dy=target.y-p.y;
-    u+=(dx*by-dy*bx)/det;v+=(ax*dy-ay*dx)/det;
+    u+=clamp((dx*by-dy*bx)/det,-.25,.25);v+=clamp((ax*dy-ay*dx)/det,-.25,.25);
   }
+  if(!Number.isFinite(u+v))return false;
   state.u=clamp(u,0,1.12);state.v=clamp(v,-.12,1.12);
   return true;
 }
@@ -2193,28 +2485,38 @@ function pageGrabCoordinates(pointer,side){
 }
 function updateManualPageTurn(pointer){
   const grab=motion.grab;if(!grab)return;
-  grab.pinX=0;grab.pinY=0;
-  const pose=progress=>{motion.progress=progress;return project(sampleChain(turnChain(motion.direction,progress),grab.u),grab.v);};
-  let low=0,high=.985;
+  const now=performance.now(),dt=Math.max(16,now-(grab.lastTime||now));
+  const velocity=clamp((pointer.x-(grab.lastX??pointer.x))*grab.direction/dt,-1,1);
+  grab.lag=mix(grab.lag||0,velocity*.1,.3);grab.lastTime=now;grab.lastX=pointer.x;
+  // The hand may pull just beyond the trim for a natural overhang, but a
+  // generous off-page target made the sheet stand taller than the book.
+  grab.hand={x:pointer.x,y:clamp(pointer.y,TOP-24,BOTTOM+14)};
+  // Vertical movement tilts the rolling bend and shifts its free material.
+  // Both terms fade at the flat endpoints and share the release envelope.
+  if(grab.originY===undefined)grab.originY=drag?.y??pointer.y;
+  const verticalPull=pointer.y-grab.originY;
+  grab.diagonal=clamp(verticalPull/450,-.12,.12);
+  grab.pitch=clamp(verticalPull/320,-.18,.18);
+  // Horizontal progress is solved on that same diagonal surface.
+  let low=0,high=1;
   for(let i=0;i<15;i++){
-    const middle=(low+high)/2,q=pose(middle);
-    if((q.x-pointer.x)*grab.direction>0)low=middle;else high=middle;
+    const mid=(low+high)/2;
+    motion.progress=mid;
+    const q=project(sampleChain(turnChain(motion.direction,mid),grab.u),grab.v);
+    if((q.x-grab.hand.x)*motion.direction>0)low=mid;else high=mid;
   }
-  const progress=Math.max((low+high)/2,Math.min(.045,Math.abs(pointer.y-drag.y)/1400));
-  const held=pose(progress);
-  // A bounded pin constraint follows the finger without stretching the bound
-  // edge or dragging the whole sheet off the book when pulled out of reach.
-  grab.pinX=clamp(pointer.x-held.x,-70,70);
-  grab.pinY=clamp(pointer.y-held.y,-180,180);
+  motion.progress=(low+high)/2;
+  const chain=turnChain(motion.direction,motion.progress),held=project(sampleChain(chain,grab.u),grab.v);
+  grab.resistance=Math.hypot(held.x-grab.hand.x,held.y-grab.hand.y);
 }
 canvas.addEventListener('pointerdown',e=>{
-  if(spineView||spineMotion)return;
+  if(spineView||spineMotion||itemDrag?.landing)return;
   if(closedEdge){animateCover(closedEdge,false);return;}
   if(coverMotion)return;
   const p=point(e);
   const bookmarkHit=itemHit(p);if(bookmarkHit?.hiddenMark){navigateToChapter(itemState(bookmarkHit.item).edgeMark.page);return;}
   if((p.y<100||p.y>590)&&!bookmarkHit)return;
-  const toc=tocHitAreas.find(area=>p.x>=area.x&&p.x<=area.x+area.w&&p.y>=area.y&&p.y<=area.y+area.h);
+  const toc=!bookmarkHit&&tocHitAreas.find(area=>p.x>=area.x&&p.x<=area.x+area.w&&p.y>=area.y&&p.y<=area.y+area.h);
   if(toc){navigateToChapter(toc.target);return;}
   const hit=itemHit(p);
   if(hit) {
@@ -2222,24 +2524,14 @@ canvas.addEventListener('pointerdown',e=>{
     if(state.taped){openItem(hit.item,hit.back,hit.pageNumber);return;}
     const angle=state.rotation,dx=p.x-hit.x,dy=p.y-hit.y;
     const grabX=dx*Math.cos(angle)+dy*Math.sin(angle),grabY=-dx*Math.sin(angle)+dy*Math.cos(angle);
-    let surfaceGrab=null;
-    if(!state.outside) {
-      const side=hit.pageNumber%2===0?1:-1,amount=side<0?spread/(spreadCount()-1):1-spread/(spreadCount()-1);
-      const chain=resting(side,amount),width=128*208/180*(hit.item.type==='feather'?3:1);
-      let rx=0,ry=0;
-      for(let i=0;i<8;i++) {
-        const q=rigidInsertPoint(chain,side,hit.pageNumber,state,rx,ry,width),a=rigidInsertPoint(chain,side,hit.pageNumber,state,rx+1,ry,width),b=rigidInsertPoint(chain,side,hit.pageNumber,state,rx,ry+1,width);
-        const ax=a.x-q.x,ay=a.y-q.y,bx=b.x-q.x,by=b.y-q.y,det=ax*by-ay*bx;
-        if(Math.abs(det)<.001)break;
-        rx+=((p.x-q.x)*by-(p.y-q.y)*bx)/det;ry+=(ax*(p.y-q.y)-ay*(p.x-q.x))/det;
-      }
-      surfaceGrab={rx,ry};
-    }
-    const width=128*208/180*(hit.item.type==='feather'?3:1),height=96*164/136*(hit.item.type==='feather'?3:1);
-    const plane=surfaceGrab||{rx:dx,ry:dy},localX=plane.rx*Math.cos(angle)+plane.ry*Math.sin(angle),localY=-plane.rx*Math.sin(angle)+plane.ry*Math.cos(angle);
+    const width=128*(hit.item.type==='feather'?3:1),height=96*(hit.item.type==='feather'?3:1);
+    // Keep the actual screen-space grip point through pickup. Re-inverting a
+    // changing page plane on every move caused cards to jump as they crossed
+    // the spine and changed support from one leaf to another.
+    const localX=grabX,localY=grabY,displayScale=hit.polygon?Math.max(.55,Math.min(1.35,Math.hypot(hit.polygon[1].x-hit.polygon[0].x,hit.polygon[1].y-hit.polygon[0].y)/width)):1;
     const rotating=e.altKey;
     itemDrag={item:hit.item,pageNumber:hit.pageNumber,startX:p.x,startY:p.y,x:hit.x,y:hit.y,
-      grabX,grabY,surfaceGrab,startRotation:angle,rotating,startPointerAngle:Math.atan2(plane.ry,plane.rx),
+      displayX:hit.x,displayY:hit.y,displayScale,rotation:angle,grabX,grabY,startRotation:angle,rotating,startPointerAngle:Math.atan2(dy,dx),
       localX,localY,inertia:(width*width+height*height)/12,lastPointer:p,moved:false};
     canvas.setPointerCapture(e.pointerId);canvas.style.cursor='grabbing';draw();return;
   }
@@ -2248,33 +2540,31 @@ canvas.addEventListener('pointerdown',e=>{
   const direction=page.side;
   const material=pageGrabCoordinates(p,direction);
   stopAuto();if(!begin(direction,true)||!motion)return;
-  motion.grab={...material,direction,hinge:resting(direction,direction<0?spread/(spreadCount()-1):1-spread/(spreadCount()-1))[0].z,release:1};
+  motion.grab={...material,direction,release:1};
   drag={x:p.x,y:p.y,direction,moved:false};canvas.setPointerCapture(e.pointerId);
 });
 canvas.addEventListener('pointermove',e=>{
+  if(itemDrag?.landing)return;
   if(itemDrag) {
     const p=point(e),dx=p.x-itemDrag.startX,dy=p.y-itemDrag.startY;
     if(Math.hypot(dx,dy)>5)itemDrag.moved=true;
     if(itemDrag.rotating){
-      const state=itemState(itemDrag.item),plane=state.outside?{rx:p.x-itemDrag.x,ry:p.y-itemDrag.y}:insertPlaneCoordinates(itemDrag.item,itemDrag.pageNumber,state,p);
-      const delta=Math.atan2(plane.ry,plane.rx)-itemDrag.startPointerAngle;
-      state.rotation=itemDrag.startRotation+Math.atan2(Math.sin(delta),Math.cos(delta));
+      const delta=Math.atan2(p.y-itemDrag.displayY,p.x-itemDrag.displayX)-itemDrag.startPointerAngle;
+      itemDrag.rotation=itemDrag.startRotation+Math.atan2(Math.sin(delta),Math.cos(delta));
       canvas.style.cursor='crosshair';draw();return;
     }
-    // A uniform rectangular lamina pulled at one material point. Torque and
-    // translation share displacement according to distributed inertia. The
-    // final pin constraint keeps that material point under the pointer.
-    const d=itemDrag,state=itemState(d.item),from=d.lastPointer;
+    // Apply torque in the lifted screen plane. The card remains a single stiff
+    // object while it crosses pages; support coordinates are solved once on
+    // release, rather than changing under the pointer during the drag.
+    const d=itemDrag,from=d.lastPointer;let previous=from;
     const steps=Math.max(1,Math.ceil(Math.hypot(p.x-from.x,p.y-from.y)/8));
     for(let i=1;i<=steps;i++){
       const pointer={x:mix(from.x,p.x,i/steps),y:mix(from.y,p.y,i/steps)};
-      const c=Math.cos(state.rotation),s=Math.sin(state.rotation),rx=d.localX*c-d.localY*s,ry=d.localX*s+d.localY*c;
-      const target=state.outside?{rx:pointer.x-d.x,ry:pointer.y-d.y}:insertPlaneCoordinates(d.item,d.pageNumber,state,pointer);
-      state.rotation+=(rx*(target.ry-ry)-ry*(target.rx-rx))/(d.inertia+rx*rx+ry*ry);
-      const C=Math.cos(state.rotation),S=Math.sin(state.rotation),grab={rx:d.localX*C-d.localY*S,ry:d.localX*S+d.localY*C,pointer};
-      const center={x:pointer.x-grab.rx,y:pointer.y-grab.ry};
-      if(placeLooseItem(d.item,center,state.outside?null:grab))d.pageNumber=state.pageNumber;
-      d.x=state.outside?state.outsideX:center.x;d.y=state.outside?state.outsideY:center.y;
+      const c=Math.cos(d.rotation),s=Math.sin(d.rotation),rx=d.localX*c-d.localY*s,ry=d.localX*s+d.localY*c,dx=pointer.x-previous.x,dy=pointer.y-previous.y;
+      d.rotation+=(rx*dy-ry*dx)/(d.inertia+rx*rx+ry*ry);
+      const C=Math.cos(d.rotation),S=Math.sin(d.rotation),pinX=d.localX*C-d.localY*S,pinY=d.localX*S+d.localY*C;
+      d.displayX=pointer.x-pinX;d.displayY=pointer.y-pinY;
+      previous=pointer;
     }
     d.lastPointer=p;
     canvas.style.cursor='grabbing';draw();return;
@@ -2283,7 +2573,10 @@ canvas.addEventListener('pointermove',e=>{
     const p=point(e),toc=tocHitAreas.find(area=>p.x>=area.x&&p.x<=area.x+area.w&&p.y>=area.y&&p.y<=area.y+area.h);
     const nextHighlight=toc?.row??-1;
     if(nextHighlight!==highlightedToc){highlightedToc=nextHighlight;if(tocHitAreas.length)draw();}
-    canvas.style.cursor=(toc||itemHit(p))?'pointer':'grab';return;
+    const hit=itemHit(p),hover=hit?.item||null;
+    if(hoveredInsert!==hover){hoveredInsert=hover;draw();}
+    canvas.style.cursor=hit?(itemState(hit.item).taped?'pointer':'grab'):toc?'pointer':'ew-resize';
+    canvas.title=hit?hit.item.title+(itemState(hit.item).taped?' · taped · click to inspect':' · drag to move · click to inspect'):'';return;
   }
   const p=point(e),delta=(drag.x-p.x)*drag.direction;
   if(Math.hypot(delta,p.y-drag.y)>5)drag.moved=true;
@@ -2291,23 +2584,58 @@ canvas.addEventListener('pointermove',e=>{
   updateManualPageTurn(p);canvas.style.cursor='grabbing';draw();
 });
 canvas.addEventListener('pointerup',e=>{
+  if(itemDrag?.landing)return;
   if(itemDrag) {
-    const current=itemDrag, moved=current.moved;itemDrag=null;canvas.style.cursor='grab';
-    if(moved){rememberEdgeBookmark(current.item);refreshKeepsakes();draw();}
+    const current=itemDrag,moved=current.moved,state=itemState(current.item);itemDrag=null;canvas.style.cursor='grab';
+    if(moved){
+      itemDrag=current;
+      current.landing=true;
+      state.rotation=current.rotation;
+      const grab={rx:current.lastPointer.x-current.displayX,ry:current.lastPointer.y-current.displayY,pointer:current.lastPointer};
+      placeLooseItem(current.item,{x:current.displayX,y:current.displayY},grab);
+      rememberEdgeBookmark(current.item);persistInsertMounts();refreshKeepsakes();settleDraggedInsert(current);
+    }
     else if(itemState(current.item).edgeMark)navigateToChapter(itemState(current.item).edgeMark.page);
     else openItem(current.item,itemState(current.item).back,current.pageNumber);
     return;
   }
   if(!drag||!motion)return;
-  const commit=!drag.moved||motion.progress>.22;
+  const grab=motion.grab,chain=grab?turnChain(motion.direction,motion.progress):null;
+  const held=grab?project(sampleChain(chain,grab.u),grab.v):null;
+  const hinge=pageBindingAnchor(grab?.v??.5).x;
+  const crossed=held&&motion.direction*(held.x-hinge)<-6;
+  // A released page keeps travelling once its center of mass has passed the
+  // halfway point, even if the hand itself is still on the original side.
+  // Pointer velocity adds a small, bounded inertia bias at the decision edge.
+  const releaseProgress=motion.progress+clamp(grab?.lag??0,-.12,.12)*.5;
+  const commit=!drag.moved||crossed||releaseProgress>.48;
   if(!drag.moved)delete motion.grab;
   drag=null;canvas.style.cursor='grab';settle(commit);
 });
+canvas.addEventListener('pointerleave',()=>{if(!drag&&!itemDrag&&hoveredInsert){hoveredInsert=null;canvas.title='';draw();}});
 canvas.addEventListener('pointercancel',()=>{
+  if(itemDrag?.landing)return;
   if(itemDrag){itemDrag=null;refreshKeepsakes();draw();return;}
   if(drag&&motion){drag=null;settle(false);}
 });
 // Closed models are isolated from the turning-sheet mesh and insert ownership.
+const bakedShelfMaterials=new Map();
+async function loadShelfMaterials(){
+  // Bundled editions have pre-rendered shelf textures. Edited/custom books
+  // still use the live material builder and its in-memory cache.
+  try{
+    const response=await fetch('assets/shelf-cache/manifest.json');if(!response.ok)return;
+    const records=await response.json(),images=new Map();
+    const sizes=await fetch('assets/shelf-cache/body-sizes.json').then(r=>r.ok?r.json():[]);for(const [key,size] of sizes)bundledBodySizes.set(key,size);
+    await Promise.all(records.map(async record=>{
+      const result={...record};
+      await Promise.all(['front','back','spine'].map(async field=>{
+        const src=record[field];if(!images.has(src))images.set(src,(async()=>{const image=new Image();image.src=src;await image.decode();return image;})());
+        result[field]=await images.get(src);
+      }));const parts=JSON.parse(record.key);parts[3] ||= [];bakedShelfMaterials.set(JSON.stringify(parts),result);
+    }));
+  }catch(error){console.warn('Shelf texture cache unavailable; using live materials.',error);}
+}
 const closedMaterialCache=new Map();
 let closedSceneKey='';
 let closedSceneSyncing=false;
@@ -2315,8 +2643,11 @@ const current3DBook=()=>({...bookContent,id:activeBookId||'current-unsaved',name
 function closed3DActive(){return loaded&&!coverMotion&&!closedFlipMotion&&!spineMotion&&(bookTableMode||!!closedEdge||spineView);}
 function closedMaterials(book) {
   const palette={outside:'#9b382d',inside:'#c85e68',metal:'gold',...book.palette};
-  const key=JSON.stringify([book.name,palette,book.covers,book.edgeBookmarks,effectiveSpineOrnaments(book),bookFormatRatio(book)]);
+  const key=JSON.stringify([book.name,palette,book.covers,book.edgeBookmarks||[],effectiveSpineOrnaments(book),bookFormatRatio(book)]);
   if(closedMaterialCache.has(key))return closedMaterialCache.get(key);
+  if(bakedShelfMaterials.has(key)){
+    const baked={...bakedShelfMaterials.get(key),paper:assets.stack,bookmarks:[]};closedMaterialCache.set(key,baked);return baked;
+  }
   const outside=tintCoverSprite(baseAssets.front,'outside',palette);
   const symbols=tintCoverSprite(baseAssets.symbols,'symbols',palette);
   const makeCover=edge=>{
@@ -2416,7 +2747,7 @@ function restoreClosedScene(scene) {
   Object.assign(closedBooks3D,{models:scene.models.map(m=>({...m})),yaw:scene.yaw,pitch:scene.pitch,roll:scene.roll||0,distance:scene.distance,
     center:{...scene.center},table:scene.table,shelfOnly:!!scene.shelfOnly,mode:scene.mode,gesture:null,dragTarget:null});
   closedBooks3D.selected=closedBooks3D.models.find(m=>m.id===scene.selected)||closedBooks3D.models[0];
-  for(const model of closedBooks3D.models){const book=model.id===activeBookId?current3DBook():savedBooks.find(b=>b.id===model.id)||model.book;model.book=book;model.width=450*bookFormatRatio(book);}
+  for(const model of closedBooks3D.models){const book=model.id===activeBookId?current3DBook():savedBooks.find(b=>b.id===model.id)||model.book;model.book=book;Object.assign(model,closedBookDimensions(book));}
   const current=current3DBook(),books=bookShelfMode?savedBooks.map(book=>book.id===current.id?current:book):bookTableMode?[current,...savedBooks.filter(book=>book.id!==current.id)]:[current];
   closedSceneKey=JSON.stringify([bookTableMode,bookShelfMode,spineView,closedEdge,books.map(book=>[book.id,book.pageCount])]);
 }
@@ -2520,7 +2851,7 @@ function startCoverBridge(edge,closing,sourceScene) {
   let scene=sourceScene||(!closing&&closed3DActive()?captureClosedScene():null);
   if(!scene)scene=bookReturnScene?.selected===(activeBookId||'current-unsaved')?bookReturnScene:defaultClosedScene(edge);
   // Read the live cover configuration when returning, without moving its stack.
-  scene={...scene,models:scene.models.map(m=>m.id===(activeBookId||'current-unsaved')?{...m,book:current3DBook(),height:ClosedBooks3D.thickness(pageCount),width:m.length*bookFormatRatio(bookContent)}:{...m})};
+  scene={...scene,models:scene.models.map(m=>m.id===(activeBookId||'current-unsaved')?{...m,book:current3DBook(),height:ClosedBooks3D.thickness(physicalPageCount(bookContent)),...closedBookDimensions(bookContent)}:{...m})};
   if(closing&&!scene.table&&!scene.spine){scene.edge=edge;if((scene.pitch<0)!==(edge==='back'))scene.pitch=-scene.pitch;}
   if(!closing)bookReturnScene=scene;
   const resumeAuto=!closing&&$('#autoplay').getAttribute('aria-pressed')==='true';
