@@ -1,5 +1,12 @@
 # Changelog
 
+## 1.0.47 - 2026-11-16
+
+- Add local Kokoro read-aloud with Ember's seven voice choices, playback speed, pause/resume, stop, continuous pages and word highlighting synchronized to model-generated speech timings. Load the model in a worker only on demand, prefetch one passage and reuse browser-cached model files. Include a device-voice fallback.
+- Remove unused cover recoloring from shelf startup; measured local startup fell from 1.25 seconds to 0.55 seconds. Keep cover recoloring on first open and preserve custom palettes.
+- Show grab/grabbing hands over books and page pulls instead of resize arrows.
+- Update Windows installer/portable downloads and the local launcher while preserving the existing desktop profile.
+
 ## 1.0.46 - 2026-10-26
 
 - Replace Romeo and Juliet source-page shrink-to-fit with dedicated play pagination in the selected pixel font. Preserve every source word and line, apply hanging indents to wrapped verse, distinguish speakers and stage directions, and keep speaker labels with their dialogue.
@@ -32,14 +39,14 @@
 - Correct the binding regression: move the sewn edge with the page block between inner board joints, eliminating the exposed half-spine strip at the first and last spreads. Preserve constrained diagonal turns.
 - Use the projected binding for turn release and insert crossing. Add independent endpoint joint checks and first/middle/last spread captures.
 
-## 1.0.41 — 2026-10-24
+## 1.0.41 â€” 2026-10-24
 
 - Restore bounded diagonal pulls using a coupled fold phase and shear with an invertible material-row coordinate; retain a separating direction within each row to prevent self-intersection. Lower the rolling bend and soften the initial peel.
 - Anchor resting and turning leaves to the leather spine centre line, including its head and tail, rather than moving the sewing to the board joint at the ends of the book.
 - Pre-render bundled shelf materials and default edition text sizes; load only required fonts, defer illustrations, skip unused legacy repagination, and reuse recoloured sprites. Custom covers and edited text retain live rendering/layout.
 - Validate diagonal pulls, binding alignment, reversals, raster depth/coverage, shelf gestures and fonts. Regenerate bundled material/layout caches with `node scripts/bake-shelf-materials.cjs` against the current web preview after changing bundled covers, fonts, typography or editions, then rebuild the web output.
 
-## 1.0.40 — 2026-10-24
+## 1.0.40 â€” 2026-10-24
 
 - Replace the held arch, free tail and vertex-blended release with one constrained turning surface. Every cross-section advances along a separating axis and material rows retain distinct vertical coordinates.
 - Solve horizontal drag position on that surface; resist vertical pulls instead of creating a second, intersecting fold. Release and cancellation follow the same geometry.

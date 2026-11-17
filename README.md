@@ -10,7 +10,7 @@ No installation or account is required. The browser version uses the same book r
 
 The approved working checkpoint is **v1.0.11**. The app displays **Pixel Book**; Windows installers/executables retain their legacy **The Book** identifier. The application ID and save location are intentionally unchanged so existing books keep working.
 
-The current development version is **v1.0.46**. My shelf opens the wooden 3D library directly; a Table view button switches to the saved arrangement without moving books. Right-click spines for read/cover/table actions. Manual turns use the actual material grab point: corner pulls twist the sheet, centre pulls bend it symmetrically, vertical pulls follow the pointer, and release smoothly lands or cancels. Normal page clicks and chapter journeys remain available.
+The current development version is **v1.0.47**. My shelf opens the wooden 3D library directly; a Table view button switches to the saved arrangement without moving books. Right-click spines for read/cover/table actions. Manual turns use the actual material grab point: corner pulls twist the sheet, centre pulls bend it symmetrically, vertical pulls follow the pointer, and release smoothly lands or cancels. Normal page clicks and chapter journeys remain available.
 
 Reading editions flow prose at a consistent size in the selected pixel font, with chapter headings and links preserved. Romeo and Juliet uses dedicated play pagination with speakers, stage directions and hanging verse indents. Original pages remain available, and authored or bookmarked passages are preserved during layout migration. See [the changelog](CHANGELOG.md) for the complete updates.
 
@@ -27,6 +27,12 @@ To change spine ornaments, close the book, open **Book options → Design the fr
 The novel text follows the supplied PDFs page for page, including blanks: **Dracula has 509 reading pages; Frankenstein has 268**. Dracula's physical binding has one extra blank reverse, excluded from reading-page counts. Original text-extraction artifacts may remain. Older expanded editions with edits or bookmarks are preserved as a separate “previous pagination” shelf copy during migration. Bundled novel text stays outside localStorage; your edits, copies and shelf remain local.
 
 Use **Contents** above the book to select a chapter, or the always-visible **Page / Go** box beneath it to jump to a PDF page number. **Read text** opens selectable, unwarped text with adjustable 18–34 px type and previous/next page buttons; returning to the book navigates to that same page. The main novel renderer also uses higher-resolution text without changing the original PDF's page boundaries. Outside and inside covers use native full-colour pickers.
+
+### Read aloud
+
+Choose **Read aloud** beneath the book, then press **Read aloud** in the text reader. Heart, Sarah, Bella, Adam, Michael, Emma and George are the same local Kokoro voice choices used by Ember. Each word is highlighted using the generated audio's timing data. Pause/resume, stop, narration speed and automatic next-page reading are available. Closing the reader or changing pages stops playback.
+
+The first use downloads the AI model and selected voice; model files are cached by your browser. Speech runs on your device in a worker, using WebGPU when available and a slower WASM fallback. Book text is not sent to a voice service. **Device voice** uses your browser's built-in speech engine without the model download; word-boundary support depends on the installed voice. Neural voices need an internet connection for their first download. These are Kokoro voices, not ElevenLabs cloud voices.
 
 ### Added classics and source PDFs
 
@@ -70,12 +76,12 @@ This is an independent project, not an official Grudgekeeper product or an endor
 
 ## Download
 
-See [Releases](https://github.com/ijustcreate/pixel-book/releases) for Windows x64 packages:
+Download the current **v1.0.47** Windows x64 packages from [Releases](https://github.com/ijustcreate/pixel-book/releases/tag/v1.0.47):
 
-- `The-Book-Setup-1.0.11.exe` — installer.
-- `The-Book-Portable-1.0.11.exe` — runs without installing.
+- [The-Book-Setup-1.0.47.exe](https://github.com/ijustcreate/pixel-book/releases/download/v1.0.47/The-Book-Setup-1.0.47.exe) — installer.
+- [The-Book-Portable-1.0.47.exe](https://github.com/ijustcreate/pixel-book/releases/download/v1.0.47/The-Book-Portable-1.0.47.exe) — runs without installing.
 
-These are unsigned Windows builds. Windows may show a publisher/reputation warning. [SHA-256 checksums](docs/releases/v1.0.11.sha256) accompany the release.
+These are unsigned Windows builds. Windows may show a publisher/reputation warning. [SHA-256 checksums](docs/releases/v1.0.47.sha256) accompany the release. The earlier [v1.0.11 approved checkpoint](https://github.com/ijustcreate/pixel-book/releases/tag/v1.0.11) remains available.
 
 ## Features
 

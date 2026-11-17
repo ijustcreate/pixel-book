@@ -15,7 +15,7 @@ const server = http.createServer((request, response) => {
   if (!file.startsWith(root + path.sep)) { response.writeHead(403).end(); return; }
   fs.readFile(file, (error, content) => {
     if (error) { response.writeHead(404).end('Not found'); return; }
-    response.writeHead(200, { 'Content-Type': mime[path.extname(file)] || 'application/octet-stream', 'Cache-Control': 'no-cache' });
+    response.writeHead(200, { 'Content-Type': path.extname(file)==='.mjs'?'text/javascript; charset=utf-8':mime[path.extname(file)] || 'application/octet-stream', 'Cache-Control': 'no-cache' });
     response.end(content);
   });
 });

@@ -11,3 +11,5 @@
 *.ico binary
 *.gif binary
 *.exe binary
+# Retain upstream formatting in vendored speech-engine files.
+assets/vendor/** -whitespace

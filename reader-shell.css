@@ -56,6 +56,12 @@ body.reader-shell #status { position:fixed; bottom:18px; left:18px; margin:0; ma
 #reader-focus-controls { position:fixed; left:50%; bottom:76px; translate:-50% 0; z-index:6; display:flex; gap:7px; padding:5px; border:1px solid #9c80514d; border-radius:5px; background:#121b1de8; }
 #reader-focus-controls[hidden] { display:none; }
 #reader-focus-controls button { font-size:11px; padding:7px 10px; }
+.reading-audio { border-block:1px solid #9c80514d; padding:10px 0; margin:8px 0; }
+.reading-audio-buttons { display:flex; align-items:center; gap:8px; flex-wrap:wrap; }
+.reading-audio label { display:flex; align-items:center; gap:5px; font-size:12px; }
+#audio-status { font:12px/1.5 monospace; margin:8px 0 0; }
+#reading-text .spoken-word { background:#f1c96f; color:#241a10; border-radius:3px; box-shadow:0 0 0 2px #f1c96f; }
+@media(max-width:600px){.reading-audio-buttons{gap:6px}.reading-audio select{max-width:175px}}
 body.reader-shell #page-workshop { width:min(1240px,94vw); max-width:94vw; height:min(820px,86dvh); max-height:86dvh; box-shadow:0 20px 80px #0008; border-radius:5px; }
 body.reader-shell #page-workshop::backdrop { background:#03070970; backdrop-filter:none; }
 @media(max-width:650px){body.reader-shell .library-toolbar { left:8px; right:8px; top:8px; gap:4px; }body.reader-shell .library-toolbar button { padding:8px; font-size:10px; }body.reader-shell #reader-book-name { font-size:12px; padding:0 5px; max-width:34vw; }#reader-tools-panel { right:12px; top:52px; max-height:calc(100dvh - 130px); padding:14px; }body.reader-shell #status { bottom:72px; left:12px; max-width:90vw; }body.reader-shell #page-workshop { height:90dvh; max-height:90dvh; }body.reader-shell main .book-stage { width:min(112vw,calc((100dvh - 104px)*1.8)); }}

@@ -81,7 +81,8 @@ async function load() {
     $('#outside-color').value=bookContent.palette.outside;
     $('#inside-color').value=bookContent.palette.inside;
     $('#metal-color').value=bookContent.palette.metal;
-    applyBookPalette(false);
+    // The initial shelf uses baked materials. Tint the active open book on its
+    // first draw instead of blocking shelf startup with unused cover pixels.
     resetSessionInserts();restoreEdgeBookmarks();
     loaded = true;
     $('#book-name').value=bookName;
@@ -2575,7 +2576,7 @@ canvas.addEventListener('pointermove',e=>{
     if(nextHighlight!==highlightedToc){highlightedToc=nextHighlight;if(tocHitAreas.length)draw();}
     const hit=itemHit(p),hover=hit?.item||null;
     if(hoveredInsert!==hover){hoveredInsert=hover;draw();}
-    canvas.style.cursor=hit?(itemState(hit.item).taped?'pointer':'grab'):toc?'pointer':'ew-resize';
+    canvas.style.cursor=hit?(itemState(hit.item).taped?'pointer':'grab'):toc?'pointer':'grab';
     canvas.title=hit?hit.item.title+(itemState(hit.item).taped?' · taped · click to inspect':' · drag to move · click to inspect'):'';return;
   }
   const p=point(e),delta=(drag.x-p.x)*drag.direction;
@@ -2973,9 +2974,9 @@ canvas.addEventListener('keydown',e=>{if(closed3DActive()&&(e.key==='ContextMenu
 for(const type of ['pointerdown','pointermove','pointerup','pointercancel'])canvas.addEventListener(type,event=>{
   if(!closed3DActive())return;
   event.stopImmediatePropagation();event.preventDefault();
-  if(type==='pointerdown'){if(event.button!==0)return;closedBooks3D.pointerDown(point(event));canvas.setPointerCapture(event.pointerId);}
-  else if(type==='pointermove')closedBooks3D.pointerMove(point(event));
-  else {closedBooks3D.pointerUp(type==='pointercancel');if(canvas.hasPointerCapture(event.pointerId))canvas.releasePointerCapture(event.pointerId);}
+  if(type==='pointerdown'){if(event.button!==0)return;closedBooks3D.pointerDown(point(event));canvas.style.cursor='grabbing';canvas.setPointerCapture(event.pointerId);}
+  else if(type==='pointermove'){closedBooks3D.pointerMove(point(event));canvas.style.cursor=closedBooks3D.gesture?'grabbing':closedBooks3D.hit(point(event))?'grab':'default';}
+  else {closedBooks3D.pointerUp(type==='pointercancel');canvas.style.cursor='grab';if(canvas.hasPointerCapture(event.pointerId))canvas.releasePointerCapture(event.pointerId);}
 },true);
 canvas.addEventListener('wheel',event=>{if(closed3DActive()){event.preventDefault();closedBooks3D.zoom(event.deltaY);}},{passive:false});
 canvas.addEventListener('dblclick',event=>{if(closed3DActive()){event.preventDefault();open3DBook();}});

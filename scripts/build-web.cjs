@@ -7,5 +7,6 @@ fs.mkdirSync(output, { recursive: true });
 for (const name of ['index.html', 'script.js', 'page-surface.js', 'ink.js', 'closed-books-3d.js', 'starter-library.js', 'reader-ui.js', 'book-fonts.js', 'spine-ornaments.js', 'page-workshop.js', 'book-art.js', 'book-feel.js', 'book-formats.js', 'style.css', 'reader-shell.js', 'reader-shell.css', 'reader-focus.js', 'reading-editions.js', 'book-typography.js', 'book-layout.js', 'play-layout.js']) {
   fs.copyFileSync(path.join(root, name), path.join(output, name));
 }
+fs.copyFileSync(path.join(root,'reader-audio.js'),path.join(output,'reader-audio.js'));
 fs.cpSync(path.join(root, 'assets'), path.join(output, 'assets'), { recursive: true, filter:source=>!source.split(path.sep).includes('local-fonts') });
 console.log('Static browser build: ' + output);

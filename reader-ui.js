@@ -168,6 +168,7 @@ function showContents(){
   $('#contents-dialog').showModal();
 }
 function renderReadingPage(){
+  document.dispatchEvent(new Event('book-reading-page-changing'));
   syncBookFontControls();
   readerPage=clamp(readerPage,0,readingPageCount()-1);const data=bookPage(readerPage),base=entries[readerPage%entries.length];
   const article=$('#reading-text');article.replaceChildren();article.classList.toggle('preserve-lines',!!data.preserveLines);
@@ -192,6 +193,7 @@ function renderReadingPage(){
   $('#reading-title').textContent=bookName;$('#reading-folio').textContent='Page '+(readerPage+1)+' of '+readingPageCount();
   $('#reading-previous').disabled=readerPage===0;$('#reading-next').disabled=readerPage===readingPageCount()-1;
   readerKey=bookName+':'+readerPage+':'+JSON.stringify(data);article.scrollTop=0;
+  document.dispatchEvent(new Event('book-reading-page-ready'));
 }
 $('#contents-open').onclick=showContents;
 $('#contents-close').onclick=()=>$('#contents-dialog').close();
